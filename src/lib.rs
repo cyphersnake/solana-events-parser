@@ -220,20 +220,22 @@ pub fn bind_events(
             .ok_or(Error::EmptyInvokeLogContext { index })
     };
     let mut call_index_map = HashMap::new();
+    let mut get_and_update_call_index = move |program_id| {
+        let i = call_index_map.entry(program_id).or_insert(0);
+        let call_index = *i;
+        *i += 1;
+        call_index
+    };
 
     input.enumerate().try_fold(
         HashMap::<ProgramContext, Vec<ProgramLog>>::new(),
         |mut result, (index, log)| {
             match log? {
                 Log::ProgramInvoke { program_id, level } => {
-                    let i = call_index_map.entry(program_id).or_insert(0);
-                    let call_index = *i;
-                    *i += 1;
-
                     let new_ctx = ProgramContext {
                         program_id,
                         invoke_level: level,
-                        call_index,
+                        call_index: get_and_update_call_index(program_id),
                     };
                     if let Ok(ctx) = last_at_stack(&programs_stack, index) {
                         result
