@@ -11,35 +11,6 @@ lazy_static! {
     .unwrap();
 }
 
-pub type Pubkey = [u8; 32];
-pub type Level = NonZeroU8;
-
-#[derive(Debug, PartialEq, Eq)]
-pub enum Log {
-    ProgramInvoke {
-        program_id: Pubkey,
-        level: Level,
-    },
-    ProgramResult {
-        program_id: Pubkey,
-        err: Option<String>,
-    },
-    ProgramFailedComplete {
-        err: String,
-    },
-    ProgramLog {
-        log: String,
-    },
-    ProgramData {
-        data: String,
-    },
-    ProgramConsumed {
-        program_id: Pubkey,
-        consumed: usize,
-        all: usize,
-    },
-}
-
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum Error {
     #[error(transparent)]
@@ -75,6 +46,35 @@ pub enum Error {
     },
     #[error("Missing invoke log context {index}")]
     EmptyInvokeLogContext { index: usize },
+}
+
+pub type Pubkey = [u8; 32];
+pub type Level = NonZeroU8;
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum Log {
+    ProgramInvoke {
+        program_id: Pubkey,
+        level: Level,
+    },
+    ProgramResult {
+        program_id: Pubkey,
+        err: Option<String>,
+    },
+    ProgramFailedComplete {
+        err: String,
+    },
+    ProgramLog {
+        log: String,
+    },
+    ProgramData {
+        data: String,
+    },
+    ProgramConsumed {
+        program_id: Pubkey,
+        consumed: usize,
+        all: usize,
+    },
 }
 
 impl Log {
