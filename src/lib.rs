@@ -210,7 +210,7 @@ pub struct ProgramContext {
 }
 
 pub fn bind_events(
-    input: impl Iterator<Item = Log>,
+    input: impl Iterator<Item = Result<Log, Error>>,
 ) -> Result<HashMap<ProgramContext, Vec<ProgramLog>>, Error> {
     let mut programs_stack: Vec<ProgramContext> = vec![];
     let last_at_stack = |stack: &[ProgramContext], index: usize| {
@@ -224,7 +224,7 @@ pub fn bind_events(
     input.enumerate().try_fold(
         HashMap::<ProgramContext, Vec<ProgramLog>>::new(),
         |mut result, (index, log)| {
-            match log {
+            match log? {
                 Log::ProgramInvoke { program_id, level } => {
                     let i = call_index_map.entry(program_id).or_insert(0);
                     let call_index = *i;
@@ -324,13 +324,7 @@ pub fn bind_events(
 }
 
 pub fn parse_events(input: &[&str]) -> Result<HashMap<ProgramContext, Vec<ProgramLog>>, Error> {
-    bind_events(
-        input
-            .iter()
-            .map(|input_log| Log::new(input_log))
-            .collect::<Result<Vec<Log>, Error>>()?
-            .into_iter(),
-    )
+    bind_events(input.iter().map(|input_log| Log::new(input_log)))
 }
 
 #[cfg(test)]
