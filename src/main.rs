@@ -1,15 +1,17 @@
-pub mod log_parser;
+#[cfg(feature = "anchor")]
+pub mod event_parser;
 #[cfg(feature = "solana")]
 pub mod transaction_parser;
+
+pub mod log_parser;
 
 use anyhow::anyhow;
 use simple_logger::SimpleLogger;
 
 #[cfg(feature = "anchor")]
-pub mod event_parser;
-
-#[cfg(feature = "anchor")]
 pub use event_parser::{ParseEvent, ParseInstruction};
+#[cfg(feature = "solana")]
+pub use transaction_parser::{BindTransactionInstructionLogs, BindTransactionLogs};
 
 fn main() -> Result<(), anyhow::Error> {
     SimpleLogger::new()
