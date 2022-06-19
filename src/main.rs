@@ -1,13 +1,10 @@
 pub mod log_parser {
-    use std::{
-        collections::HashMap,
-        fmt::{Debug, Formatter, Result as FmtResult},
-        num::NonZeroU8,
-    };
+    use std::{collections::HashMap, fmt::Debug, num::NonZeroU8};
 
-    use diff::Diff;
     use lazy_static::lazy_static;
     use regex::Regex;
+    use serde::{Deserialize, Serialize};
+    use solana_sdk::pubkey::Pubkey;
 
     lazy_static! {
         static ref LOG: Regex = Regex::new(
@@ -55,7 +52,6 @@ pub mod log_parser {
         EmptyInvokeLogContext { index: usize },
     }
 
-    pub type Pubkey = [u8; 32];
     pub type Level = NonZeroU8;
 
     #[derive(Debug, PartialEq, Eq)]
@@ -92,16 +88,18 @@ pub mod log_parser {
 
             if capture.name("program_invoke").is_some() {
                 Ok(Log::ProgramInvoke {
-                    program_id: <[u8; 32]>::try_from(
-                        bs58::decode(
-                            capture
-                                .name("invoke_program_id")
-                                .expect("Unreachable.")
-                                .as_str(),
+                    program_id: Pubkey::new_from_array(
+                        <[u8; 32]>::try_from(
+                            bs58::decode(
+                                capture
+                                    .name("invoke_program_id")
+                                    .expect("Unreachable.")
+                                    .as_str(),
+                            )
+                            .into_vec()?,
                         )
-                        .into_vec()?,
-                    )
-                    .map_err(Error::WrongPubkeySize)?,
+                        .map_err(Error::WrongPubkeySize)?,
+                    ),
                     level: capture
                         .name("level")
                         .expect("Unreachable.")
@@ -110,30 +108,34 @@ pub mod log_parser {
                 })
             } else if capture.name("program_success_result").is_some() {
                 Ok(Log::ProgramResult {
-                    program_id: <[u8; 32]>::try_from(
-                        bs58::decode(
-                            capture
-                                .name("success_result_program_id")
-                                .expect("Unreachable.")
-                                .as_str(),
+                    program_id: Pubkey::new_from_array(
+                        <[u8; 32]>::try_from(
+                            bs58::decode(
+                                capture
+                                    .name("success_result_program_id")
+                                    .expect("Unreachable.")
+                                    .as_str(),
+                            )
+                            .into_vec()?,
                         )
-                        .into_vec()?,
-                    )
-                    .map_err(Error::WrongPubkeySize)?,
+                        .map_err(Error::WrongPubkeySize)?,
+                    ),
                     err: None,
                 })
             } else if capture.name("program_failed_result").is_some() {
                 Ok(Log::ProgramResult {
-                    program_id: <[u8; 32]>::try_from(
-                        bs58::decode(
-                            capture
-                                .name("failed_result_program_id")
-                                .expect("Unreachable.")
-                                .as_str(),
+                    program_id: Pubkey::new_from_array(
+                        <[u8; 32]>::try_from(
+                            bs58::decode(
+                                capture
+                                    .name("failed_result_program_id")
+                                    .expect("Unreachable.")
+                                    .as_str(),
+                            )
+                            .into_vec()?,
                         )
-                        .into_vec()?,
-                    )
-                    .map_err(Error::WrongPubkeySize)?,
+                        .map_err(Error::WrongPubkeySize)?,
+                    ),
                     err: Some(
                         capture
                             .name("failed_result_err")
@@ -168,16 +170,18 @@ pub mod log_parser {
                 })
             } else if capture.name("program_consumed").is_some() {
                 Ok(Log::ProgramConsumed {
-                    program_id: <[u8; 32]>::try_from(
-                        bs58::decode(
-                            capture
-                                .name("consumed_program_id")
-                                .expect("Unreachable.")
-                                .as_str(),
+                    program_id: Pubkey::new_from_array(
+                        <[u8; 32]>::try_from(
+                            bs58::decode(
+                                capture
+                                    .name("consumed_program_id")
+                                    .expect("Unreachable.")
+                                    .as_str(),
+                            )
+                            .into_vec()?,
                         )
-                        .into_vec()?,
-                    )
-                    .map_err(Error::WrongPubkeySize)?,
+                        .map_err(Error::WrongPubkeySize)?,
+                    ),
                     consumed: capture
                         .name("consumed_compute_units")
                         .expect("Unreachable.")
@@ -195,10 +199,7 @@ pub mod log_parser {
         }
     }
 
-    #[derive(Debug, PartialEq, Eq, Diff)]
-    #[diff(attr(
-        #[derive(Debug)]
-    ))]
+    #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
     pub enum ProgramLog {
         Data(String),
         Log(String),
@@ -206,23 +207,11 @@ pub mod log_parser {
         Consumed { consumed: usize, all: usize },
     }
 
-    #[derive(Clone, Copy, Hash, PartialEq, Eq, Diff)]
-    #[diff(attr(
-        #[derive(Debug)]
-    ))]
+    #[derive(Clone, Copy, Hash, PartialEq, Eq, Debug, PartialOrd, Ord, Serialize, Deserialize)]
     pub struct ProgramContext {
         pub program_id: Pubkey,
         pub call_index: usize,
         pub invoke_level: NonZeroU8,
-    }
-    impl Debug for ProgramContext {
-        fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-            f.debug_struct("ProgramContext")
-                .field("program_id", &bs58::encode(&self.program_id).into_string())
-                .field("call_index", &self.call_index)
-                .field("invoke_level", &self.call_index)
-                .finish()
-        }
     }
 
     pub fn bind_events(
@@ -349,10 +338,15 @@ pub mod log_parser {
 
     #[cfg(test)]
     mod log_test {
+        use std::collections::BTreeMap;
+
         use super::*;
 
-        fn to_pubkey(input: &str) -> Result<[u8; 32], Error> {
-            <[u8; 32]>::try_from(bs58::decode(&input).into_vec()?).map_err(Error::WrongPubkeySize)
+        fn to_pubkey(input: &str) -> Result<Pubkey, Error> {
+            Ok(Pubkey::new_from_array(
+                <[u8; 32]>::try_from(bs58::decode(&input).into_vec()?)
+                    .map_err(Error::WrongPubkeySize)?,
+            ))
         }
 
         #[test]
@@ -547,8 +541,10 @@ Program M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K success"##;
                     .map(|s| s.to_owned())
                     .collect::<Vec<_>>(),
             )
-            .unwrap();
-            let expected: HashMap<ProgramContext, Vec<ProgramLog>> = [
+            .unwrap()
+            .into_iter()
+            .collect::<BTreeMap<_, _>>();
+            let expected = [
                 (
                     ProgramContext {
                         program_id: to_pubkey("M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K")
@@ -608,26 +604,19 @@ Program M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K success"##;
                 ),
             ]
             .into_iter()
-            .collect();
-            let diff = program_events.diff(&expected);
-            assert!(
-                diff.altered.is_empty() && diff.removed.is_empty(),
-                "Altered: {:?}, Removed: {:?}",
-                diff.altered,
-                diff.removed
-            );
+            .collect::<BTreeMap<_, _>>();
+
+            assert_eq!(expected, program_events);
         }
     }
 }
 pub mod transaction_parser {
-    use std::{
-        collections::HashMap,
-        fmt::{Debug, Formatter, Result as FmtResult},
-    };
+    use std::{collections::HashMap, fmt::Debug};
 
     pub use solana_client::rpc_client::RpcClient;
     pub use solana_sdk::{
         instruction::{AccountMeta, Instruction},
+        pubkey::Pubkey,
         signature::Signature,
     };
     pub use solana_transaction_status::{
@@ -681,21 +670,13 @@ pub mod transaction_parser {
         }
     }
 
-    #[derive(Clone, Copy, Hash, PartialEq, Eq)]
+    #[derive(Clone, Copy, Hash, PartialEq, Eq, Debug)]
     pub struct InstructionContext {
-        program_id: log_parser::Pubkey,
+        program_id: Pubkey,
         call_index: usize,
     }
-    impl Debug for InstructionContext {
-        fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-            f.debug_struct("InstructionContext")
-                .field("program_id", &bs58::encode(&self.program_id).into_string())
-                .field("call_index", &self.call_index)
-                .finish()
-        }
-    }
 
-    pub type OuterInstruction = Option<log_parser::Pubkey>;
+    pub type OuterInstruction = Option<Pubkey>;
 
     pub trait BindInstructions {
         fn bind_instructions(
@@ -747,7 +728,7 @@ pub mod transaction_parser {
                 let program_id = accounts[compiled_ix.program_id_index as usize];
 
                 let ctx = InstructionContext {
-                    program_id: program_id.to_bytes(),
+                    program_id,
                     call_index: get_and_update_call_index(program_id),
                 };
                 log::trace!("InstructionContext of {} ix is {:?}", ix_index, ctx);
@@ -800,7 +781,7 @@ pub mod transaction_parser {
                             }
                         };
                         let ctx = InstructionContext {
-                            program_id: invoke_ix.program_id.to_bytes(),
+                            program_id: invoke_ix.program_id,
                             call_index: get_and_update_call_index(invoke_ix.program_id),
                         };
                         log::trace!(
@@ -809,7 +790,7 @@ pub mod transaction_parser {
                             ix_index,
                             ctx
                         );
-                        result.insert(ctx, (invoke_ix, Some(program_id.to_bytes())));
+                        result.insert(ctx, (invoke_ix, Some(program_id)));
                     }
                 }
             }
@@ -875,9 +856,12 @@ fn main() {
     let client = RpcClient::new("https://api.mainnet-beta.solana.com");
     let events = client
         .bind_transaction_instruction_logs(
-            Signature::from_str(&env::args().skip(1).next().unwrap()).unwrap(),
+            Signature::from_str(&env::args().nth(1).unwrap()).unwrap(),
         )
         .unwrap();
 
-    println!("{:?}", events);
+    println!(
+        "{}",
+        serde_json::to_string(&events.into_iter().collect::<Vec<_>>()).unwrap()
+    );
 }
