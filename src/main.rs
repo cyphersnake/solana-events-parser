@@ -613,12 +613,16 @@ Program M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K success"##;
 pub mod transaction_parser {
     use std::{collections::HashMap, fmt::Debug};
 
+    use serde::{Deserialize, Serialize};
     pub use solana_client::rpc_client::RpcClient;
     pub use solana_sdk::{
+        clock::UnixTimestamp,
         instruction::{AccountMeta, Instruction},
         pubkey::Pubkey,
         signature::Signature,
+        slot_history::Slot,
     };
+    use solana_transaction_status::EncodedConfirmedTransactionWithStatusMeta;
     pub use solana_transaction_status::{
         EncodedTransactionWithStatusMeta, UiInstruction, UiTransactionEncoding,
     };
@@ -799,49 +803,63 @@ pub mod transaction_parser {
         }
     }
 
+    #[derive(Debug, Serialize, Deserialize)]
+    pub struct TransactionParsedMeta {
+        pub meta: HashMap<ProgramContext, (Instruction, Vec<ProgramLog>)>,
+        pub slot: Slot,
+        pub block_time: Option<UnixTimestamp>,
+    }
+
     pub trait BindTransactionInstructionLogs {
-        fn bind_transaction_instruction_logs(
+        fn bind_transaction_instructions_logs(
             &self,
             signature: Signature,
-        ) -> Result<HashMap<ProgramContext, (Instruction, Vec<ProgramLog>)>, Error>;
+        ) -> Result<TransactionParsedMeta, Error>;
     }
     impl BindTransactionInstructionLogs for RpcClient {
-        fn bind_transaction_instruction_logs(
+        fn bind_transaction_instructions_logs(
             &self,
             signature: Signature,
-        ) -> Result<HashMap<ProgramContext, (Instruction, Vec<ProgramLog>)>, Error> {
-            let tx = self
-                .get_transaction(&signature, UiTransactionEncoding::Binary)?
-                .transaction;
-            let mut instructions = tx.bind_instructions(signature)?;
+        ) -> Result<TransactionParsedMeta, Error> {
+            let EncodedConfirmedTransactionWithStatusMeta {
+                transaction,
+                slot,
+                block_time,
+            } = self.get_transaction(&signature, UiTransactionEncoding::Binary)?;
+            let mut instructions = transaction.bind_instructions(signature)?;
 
-            log_parser::parse_events(
-                tx.meta
-                    .ok_or(Error::EmptyMetaInTransaction(signature))?
-                    .log_messages
-                    .ok_or(Error::EmptyLogsInTransaction(signature))?
-                    .as_slice(),
-            )?
-            .into_iter()
-            .map(|(ctx, events)| {
-                let ix_ctx = InstructionContext {
-                    program_id: ctx.program_id,
-                    call_index: ctx.call_index,
-                };
-                let (ix, outer_ix) = instructions
-                    .remove(&ix_ctx)
-                    .ok_or(Error::InstructionLogsConsistencyError(ix_ctx))?;
+            Ok(TransactionParsedMeta {
+                slot,
+                block_time,
+                meta: log_parser::parse_events(
+                    transaction
+                        .meta
+                        .ok_or(Error::EmptyMetaInTransaction(signature))?
+                        .log_messages
+                        .ok_or(Error::EmptyLogsInTransaction(signature))?
+                        .as_slice(),
+                )?
+                .into_iter()
+                .map(|(ctx, events)| {
+                    let ix_ctx = InstructionContext {
+                        program_id: ctx.program_id,
+                        call_index: ctx.call_index,
+                    };
+                    let (ix, outer_ix) = instructions
+                        .remove(&ix_ctx)
+                        .ok_or(Error::InstructionLogsConsistencyError(ix_ctx))?;
 
-                // TODO Add validation of outer ix
-                if (outer_ix.is_none() && ctx.invoke_level.get() == 1)
-                    || (outer_ix.is_some() && ctx.invoke_level.get() != 1)
-                {
-                    Ok((ctx, (ix, events)))
-                } else {
-                    Err(Error::InstructionLogsConsistencyError(ix_ctx))
-                }
+                    // TODO Add validation of outer ix
+                    if (outer_ix.is_none() && ctx.invoke_level.get() == 1)
+                        || (outer_ix.is_some() && ctx.invoke_level.get() != 1)
+                    {
+                        Ok((ctx, (ix, events)))
+                    } else {
+                        Err(Error::InstructionLogsConsistencyError(ix_ctx))
+                    }
+                })
+                .collect::<Result<_, Error>>()?,
             })
-            .collect()
         }
     }
 }
@@ -855,10 +873,11 @@ fn main() {
     SimpleLogger::new().env().init().unwrap();
     let client = RpcClient::new("https://api.mainnet-beta.solana.com");
     let events = client
-        .bind_transaction_instruction_logs(
+        .bind_transaction_instructions_logs(
             Signature::from_str(&env::args().nth(1).unwrap()).unwrap(),
         )
-        .unwrap();
+        .unwrap()
+        .meta;
 
     println!(
         "{}",
