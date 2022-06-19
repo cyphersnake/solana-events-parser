@@ -1,9 +1,13 @@
-use std::{collections::HashMap, fmt::Debug, num::NonZeroU8};
+use std::{collections::HashMap, fmt::Debug, num::NonZeroU8, str::FromStr};
 
 use lazy_static::lazy_static;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use solana_sdk::pubkey::Pubkey;
+
+#[cfg(not(feature = "solana"))]
+pub use pubkey::Pubkey;
+#[cfg(feature = "solana")]
+pub use solana_sdk::pubkey::Pubkey;
 
 lazy_static! {
     static ref LOG: Regex = Regex::new(
@@ -12,14 +16,14 @@ lazy_static! {
     .expect("Failed to compile log regexp");
 }
 
-#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+#[derive(Debug, thiserror::Error, PartialEq)]
 pub enum Error {
     #[error(transparent)]
     Base58Error(#[from] bs58::decode::Error),
     #[error(transparent)]
     ParseLevelError(#[from] std::num::ParseIntError),
-    #[error("Wrong pubkey size: {0:?}")]
-    WrongPubkeySize(Vec<u8>),
+    #[error("Wrong pubkey size: {0}")]
+    WrongPubkeySize(String),
     #[error("Bind event error")]
     BindEventError,
     #[error("Bad log line: {0}")]
@@ -47,6 +51,15 @@ pub enum Error {
     },
     #[error("Missing invoke log context {index}")]
     EmptyInvokeLogContext { index: usize },
+    #[error("Log parser corrupted")]
+    ErrorInRegexp,
+}
+
+#[cfg(feature = "solana")]
+impl From<solana_sdk::pubkey::ParsePubkeyError> for Error {
+    fn from(err: solana_sdk::pubkey::ParsePubkeyError) -> Self {
+        Self::WrongPubkeySize(err.to_string())
+    }
 }
 
 pub type Level = NonZeroU8;
@@ -85,58 +98,40 @@ impl Log {
 
         if capture.name("program_invoke").is_some() {
             Ok(Log::ProgramInvoke {
-                program_id: Pubkey::new_from_array(
-                    <[u8; 32]>::try_from(
-                        bs58::decode(
-                            capture
-                                .name("invoke_program_id")
-                                .expect("Unreachable.")
-                                .as_str(),
-                        )
-                        .into_vec()?,
-                    )
-                    .map_err(Error::WrongPubkeySize)?,
-                ),
+                program_id: Pubkey::from_str(
+                    capture
+                        .name("invoke_program_id")
+                        .ok_or(Error::ErrorInRegexp)?
+                        .as_str(),
+                )?,
                 level: capture
                     .name("level")
-                    .expect("Unreachable.")
+                    .ok_or(Error::ErrorInRegexp)?
                     .as_str()
                     .parse()?,
             })
         } else if capture.name("program_success_result").is_some() {
             Ok(Log::ProgramResult {
-                program_id: Pubkey::new_from_array(
-                    <[u8; 32]>::try_from(
-                        bs58::decode(
-                            capture
-                                .name("success_result_program_id")
-                                .expect("Unreachable.")
-                                .as_str(),
-                        )
-                        .into_vec()?,
-                    )
-                    .map_err(Error::WrongPubkeySize)?,
-                ),
+                program_id: Pubkey::from_str(
+                    capture
+                        .name("success_result_program_id")
+                        .ok_or(Error::ErrorInRegexp)?
+                        .as_str(),
+                )?,
                 err: None,
             })
         } else if capture.name("program_failed_result").is_some() {
             Ok(Log::ProgramResult {
-                program_id: Pubkey::new_from_array(
-                    <[u8; 32]>::try_from(
-                        bs58::decode(
-                            capture
-                                .name("failed_result_program_id")
-                                .expect("Unreachable.")
-                                .as_str(),
-                        )
-                        .into_vec()?,
-                    )
-                    .map_err(Error::WrongPubkeySize)?,
-                ),
+                program_id: Pubkey::from_str(
+                    capture
+                        .name("failed_result_program_id")
+                        .ok_or(Error::ErrorInRegexp)?
+                        .as_str(),
+                )?,
                 err: Some(
                     capture
                         .name("failed_result_err")
-                        .expect("Unreachable.")
+                        .ok_or(Error::ErrorInRegexp)?
                         .as_str()
                         .to_owned(),
                 ),
@@ -145,7 +140,7 @@ impl Log {
             Ok(Log::ProgramFailedComplete {
                 err: capture
                     .name("failed_complete_error")
-                    .expect("Unreachable.")
+                    .ok_or(Error::ErrorInRegexp)?
                     .as_str()
                     .to_owned(),
             })
@@ -153,7 +148,7 @@ impl Log {
             Ok(Log::ProgramLog {
                 log: capture
                     .name("log_message")
-                    .expect("Unreachable.")
+                    .ok_or(Error::ErrorInRegexp)?
                     .as_str()
                     .to_owned(),
             })
@@ -161,32 +156,26 @@ impl Log {
             Ok(Log::ProgramData {
                 data: capture
                     .name("data")
-                    .expect("Unreachable.")
+                    .ok_or(Error::ErrorInRegexp)?
                     .as_str()
                     .to_owned(),
             })
         } else if capture.name("program_consumed").is_some() {
             Ok(Log::ProgramConsumed {
-                program_id: Pubkey::new_from_array(
-                    <[u8; 32]>::try_from(
-                        bs58::decode(
-                            capture
-                                .name("consumed_program_id")
-                                .expect("Unreachable.")
-                                .as_str(),
-                        )
-                        .into_vec()?,
-                    )
-                    .map_err(Error::WrongPubkeySize)?,
-                ),
+                program_id: Pubkey::from_str(
+                    capture
+                        .name("consumed_program_id")
+                        .ok_or(Error::ErrorInRegexp)?
+                        .as_str(),
+                )?,
                 consumed: capture
                     .name("consumed_compute_units")
-                    .expect("Unreachable.")
+                    .ok_or(Error::ErrorInRegexp)?
                     .as_str()
                     .parse()?,
                 all: capture
                     .name("all_computed_units")
-                    .expect("Unreachable.")
+                    .ok_or(Error::ErrorInRegexp)?
                     .as_str()
                     .parse()?,
             })
@@ -315,7 +304,7 @@ pub fn bind_events(
                         .push(ProgramLog::Consumed { consumed, all });
                     log::info!(
                         "Program {:?} at level {}, consumed {}, all: {}",
-                        bs58::encode(ctx.program_id).into_string(),
+                        bs58::encode(&ctx.program_id).into_string(),
                         ctx.invoke_level,
                         consumed,
                         all
@@ -333,16 +322,9 @@ pub fn parse_events(input: &[String]) -> Result<HashMap<ProgramContext, Vec<Prog
 
 #[cfg(test)]
 mod log_test {
-    use std::collections::BTreeMap;
+    use std::{collections::BTreeMap, str::FromStr};
 
     use super::*;
-
-    fn to_pubkey(input: &str) -> Result<Pubkey, Error> {
-        Ok(Pubkey::new_from_array(
-            <[u8; 32]>::try_from(bs58::decode(&input).into_vec()?)
-                .map_err(Error::WrongPubkeySize)?,
-        ))
-    }
 
     #[test]
     fn test_invoke() {
@@ -350,7 +332,8 @@ mod log_test {
             Log::new("Program M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K invoke [1]")
                 .expect("Failed to check log"),
             Log::ProgramInvoke {
-                program_id: to_pubkey("M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K").unwrap(),
+                program_id: Pubkey::from_str("M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K")
+                    .unwrap(),
                 level: Level::new(1).unwrap(),
             }
         );
@@ -361,7 +344,8 @@ mod log_test {
             Log::new("Program M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K success")
                 .expect("Failed to check log"),
             Log::ProgramResult {
-                program_id: to_pubkey("M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K").unwrap(),
+                program_id: Pubkey::from_str("M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K")
+                    .unwrap(),
                 err: None
             }
         );
@@ -389,7 +373,7 @@ mod log_test {
         assert_eq!(
             Log::new("Program M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K consumed 9297 of 1400000 compute units").expect("Failed to check log"),
             Log::ProgramConsumed {
-                program_id: to_pubkey("M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K").unwrap(),
+                program_id: Pubkey::from_str("M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K").unwrap(),
                 consumed: 9297,
                 all: 1400000,
             }
@@ -542,14 +526,15 @@ Program M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K success"##;
         let expected = [
             (
                 ProgramContext {
-                    program_id: to_pubkey("M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K").unwrap(),
+                    program_id: Pubkey::from_str("M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K")
+                        .unwrap(),
                     call_index: 0,
                     invoke_level: Level::new(1).unwrap(),
                 },
                 vec![
                     ProgramLog::Log("Instruction: Deposit".to_owned()),
                     ProgramLog::Invoke(ProgramContext {
-                        program_id: to_pubkey("11111111111111111111111111111111").unwrap(),
+                        program_id: Pubkey::from_str("11111111111111111111111111111111").unwrap(),
                         call_index: 0,
                         invoke_level: Level::new(2).unwrap(),
                     }),
@@ -561,7 +546,7 @@ Program M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K success"##;
             ),
             (
                 ProgramContext {
-                    program_id: to_pubkey("11111111111111111111111111111111").unwrap(),
+                    program_id: Pubkey::from_str("11111111111111111111111111111111").unwrap(),
                     call_index: 0,
                     invoke_level: Level::new(2).unwrap(),
                 },
@@ -569,14 +554,15 @@ Program M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K success"##;
             ),
             (
                 ProgramContext {
-                    program_id: to_pubkey("M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K").unwrap(),
+                    program_id: Pubkey::from_str("M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K")
+                        .unwrap(),
                     call_index: 1,
                     invoke_level: Level::new(1).unwrap(),
                 },
                 vec![
                     ProgramLog::Log("Instruction: Buy".to_owned()),
                     ProgramLog::Invoke(ProgramContext {
-                        program_id: to_pubkey("11111111111111111111111111111111").unwrap(),
+                        program_id: Pubkey::from_str("11111111111111111111111111111111").unwrap(),
                         call_index: 1,
                         invoke_level: Level::new(2).unwrap(),
                     }),
@@ -589,7 +575,7 @@ Program M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K success"##;
             ),
             (
                 ProgramContext {
-                    program_id: to_pubkey("11111111111111111111111111111111").unwrap(),
+                    program_id: Pubkey::from_str("11111111111111111111111111111111").unwrap(),
                     call_index: 1,
                     invoke_level: Level::new(2).unwrap(),
                 },
@@ -600,5 +586,40 @@ Program M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K success"##;
         .collect::<BTreeMap<_, _>>();
 
         assert_eq!(expected, program_events);
+    }
+}
+
+#[cfg(not(feature = "solana"))]
+mod pubkey {
+    use std::{ops::Deref, str::FromStr};
+
+    use serde::{Deserialize, Serialize};
+
+    #[derive(
+        Serialize, Deserialize, Default, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash,
+    )]
+    pub struct Pubkey([u8; 32]);
+    impl Deref for Pubkey {
+        type Target = [u8; 32];
+        fn deref(&self) -> &Self::Target {
+            &self.0
+        }
+    }
+    impl AsRef<[u8]> for Pubkey {
+        fn as_ref(&self) -> &[u8] {
+            self.deref()
+        }
+    }
+    impl FromStr for Pubkey {
+        type Err = bs58::decode::Error;
+
+        fn from_str(s: &str) -> Result<Self, Self::Err> {
+            let mut pk = Self([0u8; 32]);
+            if bs58::decode(s).into(&mut pk.0)?.eq(&32) {
+                Ok(pk)
+            } else {
+                Err(Self::Err::BufferTooSmall)
+            }
+        }
     }
 }
