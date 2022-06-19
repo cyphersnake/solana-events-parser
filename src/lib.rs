@@ -8,7 +8,7 @@ lazy_static! {
     static ref LOG: Regex = Regex::new(
         r"(?P<program_invoke>^Program (?P<invoke_program_id>[1-9A-HJ-NP-Za-km-z]{32,}) invoke \[(?P<level>\d+)\]$)|(?P<program_success_result>^Program (?P<success_result_program_id>[1-9A-HJ-NP-Za-km-z]{32,}) success$)|(?P<program_failed_result>^Program (?P<failed_result_program_id>[1-9A-HJ-NP-Za-km-z]{32,}) failed: (?P<failed_result_err>.*)$)|(?P<program_complete_failed_result>^Program failed to complete: (?P<failed_complete_error>.*)$)|(?P<program_log>^^Program log: (?P<log_message>.*)$)|(?P<program_data>^Program data: (?P<data>.*)$)|(?P<program_consumed>^Program (?P<consumed_program_id>[1-9A-HJ-NP-Za-km-z]{32,}) consumed (?P<consumed_compute_units>\d*) of (?P<all_computed_units>\d*) compute units$)"
     )
-    .unwrap();
+    .expect("Failed to compile log regexp");
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
