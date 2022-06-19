@@ -5,6 +5,12 @@ pub mod transaction_parser;
 use anyhow::anyhow;
 use simple_logger::SimpleLogger;
 
+#[cfg(feature = "anchor")]
+pub mod event_parser;
+
+#[cfg(feature = "anchor")]
+pub use event_parser::{ParseEvent, ParseInstruction};
+
 fn main() -> Result<(), anyhow::Error> {
     SimpleLogger::new()
         .env()

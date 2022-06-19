@@ -5,8 +5,9 @@ publish = true
 edition = "2021"
 
 [features]
-default = ["solana"]
+default = ["solana", "anchor"]
 solana = ["solana-client", "solana-sdk", "solana-transaction-status"]
+anchor = ["solana", "anchor-lang", "base64"]
 
 [dependencies]
 bs58 = "0.4.0"
@@ -14,12 +15,13 @@ lazy_static = "1.4.0"
 log = "0.4.17"
 regex = "1.5.6"
 thiserror = "1.0.31"
-simple-log = "1.5.1"
 simple_logger = "2.1.0"
 serde = { version = "1.0.137", features = ["derive"] }
 serde_json = "1.0.81"
 anyhow = "1.0.58"
 
-solana-client = { version = "1.10.26", optional = true }
-solana-sdk = { version = "1.10.26", optional = true }
-solana-transaction-status = { version = "1.10.26", optional = true }
+solana-client = { version = "1.9.13", optional = true }
+solana-sdk = { version = "1.9.13", optional = true }
+solana-transaction-status = { version = "1.9.13", optional = true }
+anchor-lang = { version = "0.24.2", optional = true }
+base64 = { version = "0.13.0", optional = true }
