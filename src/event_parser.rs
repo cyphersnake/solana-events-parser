@@ -1,20 +1,29 @@
 use std::io;
 
-use anchor_lang::{AnchorDeserialize, Discriminator, Owner};
+pub use anchor_lang::{AnchorDeserialize, Discriminator, Owner};
 
-pub use solana_sdk::instruction::Instruction;
+pub use solana_sdk::{instruction::Instruction, pubkey::Pubkey};
 
-pub use crate::log_parser::ProgramLog;
+pub use crate::{
+    log_parser::ProgramLog,
+    transaction_parser::{Error, TransactionParsedMeta},
+};
 
 const DISCRIMINATOR_SIZE: usize = 8;
 
 pub trait ParseEvent {
-    fn parse_event<T: Discriminator + AnchorDeserialize>(&self) -> Option<Result<T, io::Error>>;
+    fn parse_event<T: Discriminator + Owner + AnchorDeserialize>(
+        &self,
+        program_id: Pubkey,
+    ) -> Option<Result<T, io::Error>>;
 }
 impl ParseEvent for ProgramLog {
-    fn parse_event<E: Discriminator + AnchorDeserialize>(&self) -> Option<Result<E, io::Error>> {
+    fn parse_event<E: Discriminator + Owner + AnchorDeserialize>(
+        &self,
+        program_id: Pubkey,
+    ) -> Option<Result<E, io::Error>> {
         match self {
-            ProgramLog::Data(log) => {
+            ProgramLog::Data(log) if E::owner().eq(&program_id) => {
                 let bytes = base64::decode(&log)
                     .map_err(|_| log::warn!("Provided log line not decodable as bs64"))
                     .ok()
@@ -26,20 +35,5 @@ impl ParseEvent for ProgramLog {
             }
             _ => None,
         }
-    }
-}
-
-pub trait ParseInstruction {
-    fn parse_instruction<T: Discriminator + Owner + AnchorDeserialize>(
-        &self,
-    ) -> Option<Result<T, io::Error>>;
-}
-impl ParseInstruction for Instruction {
-    fn parse_instruction<I: Discriminator + Owner + AnchorDeserialize>(
-        &self,
-    ) -> Option<Result<I, io::Error>> {
-        let (discriminantor, event) = self.data.split_at(DISCRIMINATOR_SIZE);
-        (I::owner().eq(&self.program_id) && I::discriminator().eq(discriminantor))
-            .then(|| I::try_from_slice(event))
     }
 }
