@@ -68,27 +68,29 @@ pub struct TransactionParsedMeta {
 }
 
 #[cfg(feature = "anchor")]
-use {
-    anchor_lang::{AnchorDeserialize, Discriminator, Owner},
-    std::io,
-};
+mod anchor {
+    use std::io;
 
-impl TransactionParsedMeta {
-    #[cfg(feature = "anchor")]
-    pub fn find_ix<I: Discriminator + Owner + AnchorDeserialize>(
-        &self,
-    ) -> Result<Vec<(I, &Vec<ProgramLog>)>, io::Error> {
-        use crate::ParseInstruction;
-        self.meta
-            .iter()
-            .filter_map(|(ctx, meta)| ctx.program_id.eq(&I::owner()).then(|| meta))
-            .filter_map(|(ix, logs)| {
-                Some(
-                    ix.parse_instruction::<I>()?
-                        .map(|result_with_ix| (result_with_ix, logs)),
-                )
-            })
-            .collect::<Result<_, _>>()
+    use anchor_lang::{AnchorDeserialize, Discriminator, Owner};
+
+    use super::{ProgramLog, TransactionParsedMeta};
+
+    impl TransactionParsedMeta {
+        pub fn find_ix<I: Discriminator + Owner + AnchorDeserialize>(
+            &self,
+        ) -> Result<Vec<(I, &Vec<ProgramLog>)>, io::Error> {
+            use crate::ParseInstruction;
+            self.meta
+                .iter()
+                .filter_map(|(ctx, meta)| ctx.program_id.eq(&I::owner()).then(|| meta))
+                .filter_map(|(ix, logs)| {
+                    Some(
+                        ix.parse_instruction::<I>()?
+                            .map(|result_with_ix| (result_with_ix, logs)),
+                    )
+                })
+                .collect::<Result<_, _>>()
+        }
     }
 }
 

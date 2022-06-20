@@ -159,26 +159,29 @@ impl BindInstructions for EncodedTransactionWithStatusMeta {
 }
 
 #[cfg(feature = "anchor")]
-use {
-    anchor_lang::{AnchorDeserialize, Discriminator, Owner},
-    std::io,
-};
+mod anchor {
+    use std::io;
 
-#[cfg(feature = "anchor")]
-pub trait ParseInstruction {
-    fn parse_instruction<T: Discriminator + Owner + AnchorDeserialize>(
-        &self,
-    ) -> Option<Result<T, io::Error>>;
-}
+    use anchor_lang::{AnchorDeserialize, Discriminator, Owner};
 
-#[cfg(feature = "anchor")]
-impl ParseInstruction for Instruction {
-    fn parse_instruction<I: Discriminator + Owner + AnchorDeserialize>(
-        &self,
-    ) -> Option<Result<I, io::Error>> {
-        const DISCRIMINATOR_SIZE: usize = 8;
-        let (discriminantor, event) = self.data.split_at(DISCRIMINATOR_SIZE);
-        (I::owner().eq(&self.program_id) && I::discriminator().eq(discriminantor))
-            .then(|| I::try_from_slice(event))
+    use super::Instruction;
+
+    pub trait ParseInstruction {
+        fn parse_instruction<T: Discriminator + Owner + AnchorDeserialize>(
+            &self,
+        ) -> Option<Result<T, io::Error>>;
+    }
+
+    impl ParseInstruction for Instruction {
+        fn parse_instruction<I: Discriminator + Owner + AnchorDeserialize>(
+            &self,
+        ) -> Option<Result<I, io::Error>> {
+            const DISCRIMINATOR_SIZE: usize = 8;
+            let (discriminantor, event) = self.data.split_at(DISCRIMINATOR_SIZE);
+            (I::owner().eq(&self.program_id) && I::discriminator().eq(discriminantor))
+                .then(|| I::try_from_slice(event))
+        }
     }
 }
+#[cfg(feature = "anchor")]
+pub use anchor::*;
