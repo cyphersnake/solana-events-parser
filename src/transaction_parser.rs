@@ -10,12 +10,14 @@ pub use solana_sdk::{
     signature::Signature,
     slot_history::Slot,
 };
-use solana_transaction_status::UiTransactionTokenBalance;
+use solana_transaction_status::{
+    EncodedConfirmedTransactionWithStatusMeta, UiTransactionTokenBalance,
+};
 pub use solana_transaction_status::{
-    EncodedConfirmedTransaction, EncodedTransactionWithStatusMeta, UiInstruction,
-    UiTransactionEncoding,
+    EncodedTransactionWithStatusMeta, UiInstruction, UiTransactionEncoding,
 };
 
+use crate::instruction_parser::VersionedMessage;
 pub use crate::{
     instruction_parser::{BindInstructions, InstructionContext},
     log_parser::{self, ProgramContext, ProgramLog},
@@ -118,7 +120,7 @@ impl BindTransactionInstructionLogs for RpcClient {
         &self,
         signature: Signature,
     ) -> Result<TransactionParsedMeta, Error> {
-        let EncodedConfirmedTransaction {
+        let EncodedConfirmedTransactionWithStatusMeta {
             transaction,
             slot,
             block_time,
@@ -186,7 +188,10 @@ impl GetLamportsChanges for EncodedTransactionWithStatusMeta {
             .as_ref()
             .ok_or(Error::EmptyMetaInTransaction(*signature))?;
 
-        let accounts = msg.account_keys.as_slice();
+        let accounts = match msg {
+            VersionedMessage::Legacy(msg) => msg.account_keys,
+            VersionedMessage::V0(msg) => msg.account_keys,
+        };
         Ok(meta
             .pre_balances
             .iter()
@@ -229,7 +234,10 @@ impl GetAssetsChanges for EncodedTransactionWithStatusMeta {
             .as_ref()
             .ok_or(Error::EmptyMetaInTransaction(*signature))?;
 
-        let accounts = msg.account_keys.as_slice();
+        let accounts = match msg {
+            VersionedMessage::Legacy(msg) => msg.account_keys,
+            VersionedMessage::V0(msg) => msg.account_keys,
+        };
         meta.pre_token_balances
             .as_ref()
             .and_then(|pre_token_balances| {
@@ -239,13 +247,13 @@ impl GetAssetsChanges for EncodedTransactionWithStatusMeta {
                         let mut result = post_token_balances
                             .iter()
                             .map(|post_token_balance: &UiTransactionTokenBalance| {
-                                try_parse_balance(post_token_balance, accounts)
+                                try_parse_balance(post_token_balance, accounts.as_slice())
                             })
                             .collect::<Result<HashMap<_, _>, Error>>()?;
 
                         for pre_token_balance in pre_token_balances {
                             let (wallet_ctx, pre_balance) =
-                                try_parse_balance(pre_token_balance, accounts)?;
+                                try_parse_balance(pre_token_balance, accounts.as_slice())?;
                             *result.get_mut(&wallet_ctx).ok_or(
                                 Error::WrongBalanceAccountConsistance(wallet_ctx.wallet_address),
                             )? -= pre_balance;
