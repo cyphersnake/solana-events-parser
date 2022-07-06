@@ -1,7 +1,8 @@
 use std::{collections::HashMap, fmt::Debug, num::ParseIntError, str::FromStr};
 
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-pub use solana_client::rpc_client::RpcClient;
+pub use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::pubkey::ParsePubkeyError;
 pub use solana_sdk::{
     clock::UnixTimestamp,
@@ -49,19 +50,22 @@ pub enum Error {
     WrongBalanceAccountConsistance(Pubkey),
 }
 
+#[async_trait]
 pub trait BindTransactionLogs {
-    fn bind_transaction_logs(
+    async fn bind_transaction_logs(
         &self,
         signature: Signature,
     ) -> Result<HashMap<ProgramContext, Vec<ProgramLog>>, Error>;
 }
+#[async_trait]
 impl BindTransactionLogs for RpcClient {
-    fn bind_transaction_logs(
+    async fn bind_transaction_logs(
         &self,
         signature: Signature,
     ) -> Result<HashMap<ProgramContext, Vec<ProgramLog>>, Error> {
         Ok(log_parser::parse_events(
-            self.get_transaction(&signature, UiTransactionEncoding::Base58)?
+            self.get_transaction(&signature, UiTransactionEncoding::Base58)
+                .await?
                 .transaction
                 .meta
                 .ok_or(Error::EmptyMetaInTransaction(signature))?
@@ -109,14 +113,17 @@ mod anchor {
     }
 }
 
+#[async_trait]
 pub trait BindTransactionInstructionLogs {
-    fn bind_transaction_instructions_logs(
+    async fn bind_transaction_instructions_logs(
         &self,
         signature: Signature,
     ) -> Result<TransactionParsedMeta, Error>;
 }
+
+#[async_trait]
 impl BindTransactionInstructionLogs for RpcClient {
-    fn bind_transaction_instructions_logs(
+    async fn bind_transaction_instructions_logs(
         &self,
         signature: Signature,
     ) -> Result<TransactionParsedMeta, Error> {
@@ -124,7 +131,9 @@ impl BindTransactionInstructionLogs for RpcClient {
             transaction,
             slot,
             block_time,
-        } = self.get_transaction(&signature, UiTransactionEncoding::Binary)?;
+        } = self
+            .get_transaction(&signature, UiTransactionEncoding::Binary)
+            .await?;
         let mut instructions = transaction.bind_instructions(signature)?;
 
         let meta = transaction
