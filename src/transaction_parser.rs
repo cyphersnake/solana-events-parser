@@ -1,7 +1,8 @@
-use std::{collections::HashMap, fmt::Debug};
+use std::{collections::HashMap, fmt::Debug, num::ParseIntError, str::FromStr};
 
 use serde::{Deserialize, Serialize};
 pub use solana_client::rpc_client::RpcClient;
+use solana_sdk::pubkey::ParsePubkeyError;
 pub use solana_sdk::{
     clock::UnixTimestamp,
     instruction::{AccountMeta, Instruction},
@@ -9,6 +10,7 @@ pub use solana_sdk::{
     signature::Signature,
     slot_history::Slot,
 };
+use solana_transaction_status::UiTransactionTokenBalance;
 pub use solana_transaction_status::{
     EncodedConfirmedTransaction, EncodedTransactionWithStatusMeta, UiInstruction,
     UiTransactionEncoding,
@@ -31,10 +33,18 @@ pub enum Error {
     EmptyLogsInTransaction(Signature),
     #[error(transparent)]
     InstructionParsingError(#[from] crate::instruction_parser::Error),
+    #[error(transparent)]
+    ParsePubkeyError(#[from] ParsePubkeyError),
     #[error("Can't find ix ctx {0:?} in logs")]
     InstructionLogsConsistencyError(InstructionContext),
     #[error("Provided log and provided ix not match by owner")]
     InstructionLogsOwnerError { ix_owner: Pubkey, log_owner: Pubkey },
+    #[error("Failed while transaction decoding with signature: {0}")]
+    ErrorWhileDecodeTransaction(Signature),
+    #[error(transparent)]
+    ParseIntError(#[from] ParseIntError),
+    #[error("Pre token account don't match with post")]
+    WrongBalanceAccountConsistance(Pubkey),
 }
 
 pub trait BindTransactionLogs {
@@ -60,11 +70,14 @@ impl BindTransactionLogs for RpcClient {
     }
 }
 
+pub type AmountDiff = i128;
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TransactionParsedMeta {
     pub meta: HashMap<ProgramContext, (Instruction, Vec<ProgramLog>)>,
     pub slot: Slot,
     pub block_time: Option<UnixTimestamp>,
+    pub lamports_changes: HashMap<Pubkey, AmountDiff>,
+    pub token_balances_changes: HashMap<WalletContext, AmountDiff>,
 }
 
 #[cfg(feature = "anchor")]
@@ -112,14 +125,17 @@ impl BindTransactionInstructionLogs for RpcClient {
         } = self.get_transaction(&signature, UiTransactionEncoding::Binary)?;
         let mut instructions = transaction.bind_instructions(signature)?;
 
+        let meta = transaction
+            .meta
+            .as_ref()
+            .ok_or(Error::EmptyMetaInTransaction(signature))?;
+
         Ok(TransactionParsedMeta {
             slot,
             block_time,
             meta: log_parser::parse_events(
-                transaction
-                    .meta
-                    .ok_or(Error::EmptyMetaInTransaction(signature))?
-                    .log_messages
+                meta.log_messages
+                    .as_ref()
                     .ok_or(Error::EmptyLogsInTransaction(signature))?
                     .as_slice(),
             )?
@@ -143,6 +159,131 @@ impl BindTransactionInstructionLogs for RpcClient {
                 }
             })
             .collect::<Result<_, Error>>()?,
+            lamports_changes: transaction.get_lamports_changes(&signature)?,
+            token_balances_changes: transaction.get_assets_changes(&signature)?,
         })
     }
 }
+
+pub trait GetLamportsChanges {
+    fn get_lamports_changes(
+        &self,
+        signature: &Signature,
+    ) -> Result<HashMap<Pubkey, AmountDiff>, Error>;
+}
+impl GetLamportsChanges for EncodedTransactionWithStatusMeta {
+    fn get_lamports_changes(
+        &self,
+        signature: &Signature,
+    ) -> Result<HashMap<Pubkey, AmountDiff>, Error> {
+        let msg = self
+            .transaction
+            .decode()
+            .ok_or(Error::ErrorWhileDecodeTransaction(*signature))?
+            .message;
+        let meta = self
+            .meta
+            .as_ref()
+            .ok_or(Error::EmptyMetaInTransaction(*signature))?;
+
+        let accounts = msg.account_keys.as_slice();
+        Ok(meta
+            .pre_balances
+            .iter()
+            .zip(meta.post_balances.iter())
+            .enumerate()
+            .map(|(index, (old_balance, new_balance))| {
+                (index, *new_balance as i128 - *old_balance as i128)
+            })
+            .map(|(index, diff)| (accounts[index], diff))
+            .collect())
+    }
+}
+
+pub type TokenMint = Pubkey;
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct WalletContext {
+    pub wallet_address: Pubkey,
+    pub wallet_owner: Option<Pubkey>,
+    pub token_mint: Pubkey,
+}
+
+pub trait GetAssetsChanges {
+    fn get_assets_changes(
+        &self,
+        signature: &Signature,
+    ) -> Result<HashMap<WalletContext, AmountDiff>, Error>;
+}
+impl GetAssetsChanges for EncodedTransactionWithStatusMeta {
+    fn get_assets_changes(
+        &self,
+        signature: &Signature,
+    ) -> Result<HashMap<WalletContext, AmountDiff>, Error> {
+        let msg = self
+            .transaction
+            .decode()
+            .ok_or(Error::ErrorWhileDecodeTransaction(*signature))?
+            .message;
+        let meta = self
+            .meta
+            .as_ref()
+            .ok_or(Error::EmptyMetaInTransaction(*signature))?;
+
+        let accounts = msg.account_keys.as_slice();
+        meta.pre_token_balances
+            .as_ref()
+            .and_then(|pre_token_balances| {
+                meta.post_token_balances
+                    .as_ref()
+                    .map(|post_token_balances| {
+                        let mut result = post_token_balances
+                            .iter()
+                            .map(|post_token_balance: &UiTransactionTokenBalance| {
+                                try_parse_balance(post_token_balance, accounts)
+                            })
+                            .collect::<Result<HashMap<_, _>, Error>>()?;
+
+                        for pre_token_balance in pre_token_balances {
+                            let (wallet_ctx, pre_balance) =
+                                try_parse_balance(pre_token_balance, accounts)?;
+                            *result.get_mut(&wallet_ctx).ok_or(
+                                Error::WrongBalanceAccountConsistance(wallet_ctx.wallet_address),
+                            )? -= pre_balance;
+                        }
+
+                        Ok(result)
+                    })
+            })
+            .unwrap_or_else(|| Ok(HashMap::default()))
+    }
+}
+
+fn try_parse_balance(
+    balance: &UiTransactionTokenBalance,
+    accounts: &[Pubkey],
+) -> Result<(WalletContext, i128), Error> {
+    Ok((
+        WalletContext {
+            wallet_address: accounts[balance.account_index as usize],
+            wallet_owner: balance
+                .owner
+                .as_ref()
+                .map(|owner| Pubkey::from_str(owner.as_str()))
+                .transpose()?,
+            token_mint: Pubkey::from_str(balance.mint.as_str())?,
+        },
+        balance.ui_token_amount.amount.parse()?,
+    ))
+}
+
+// impl TryFrom<&UiTransactionTokenBalance> for (WalletContext {
+//     type Error = Error;
+//
+//     fn try_from((balance, accounts): &UiTransactionTokenBalance) -> Result<Self, Self::Error> {
+//         Ok(WalletContext {
+//             wallet_address: accounts[balance.account_index as usize],
+//             wallet_owner: balance.owner.as_ref().map(|owner| Pubkey::from_str(owner.as_str())).transpose()?,
+//             token_mint: Pubkey::from_str(balance.mint.as_str())?
+//         })
+//     }
+// }
