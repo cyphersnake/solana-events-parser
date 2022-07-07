@@ -249,27 +249,24 @@ impl GetAssetsChanges for EncodedTransactionWithStatusMeta {
         };
         meta.pre_token_balances
             .as_ref()
-            .and_then(|pre_token_balances| {
-                meta.post_token_balances
-                    .as_ref()
-                    .map(|post_token_balances| {
-                        let mut result = post_token_balances
-                            .iter()
-                            .map(|post_token_balance: &UiTransactionTokenBalance| {
-                                try_parse_balance(post_token_balance, accounts.as_slice())
-                            })
-                            .collect::<Result<HashMap<_, _>, Error>>()?;
-
-                        for pre_token_balance in pre_token_balances {
-                            let (wallet_ctx, pre_balance) =
-                                try_parse_balance(pre_token_balance, accounts.as_slice())?;
-                            *result.get_mut(&wallet_ctx).ok_or(
-                                Error::WrongBalanceAccountConsistance(wallet_ctx.wallet_address),
-                            )? -= pre_balance;
-                        }
-
-                        Ok(result)
+            .zip(meta.post_token_balances.as_ref())
+            .map(|(pre_token_balances, post_token_balances)| {
+                let mut result = post_token_balances
+                    .iter()
+                    .map(|post_token_balance: &UiTransactionTokenBalance| {
+                        try_parse_balance(post_token_balance, accounts.as_slice())
                     })
+                    .collect::<Result<HashMap<_, _>, Error>>()?;
+
+                for pre_token_balance in pre_token_balances {
+                    let (wallet_ctx, pre_balance) =
+                        try_parse_balance(pre_token_balance, accounts.as_slice())?;
+                    *result.get_mut(&wallet_ctx).ok_or(
+                        Error::WrongBalanceAccountConsistance(wallet_ctx.wallet_address),
+                    )? -= pre_balance;
+                }
+
+                Ok(result)
             })
             .unwrap_or_else(|| Ok(HashMap::default()))
     }
