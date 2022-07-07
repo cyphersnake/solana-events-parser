@@ -289,15 +289,3 @@ fn try_parse_balance(
         balance.ui_token_amount.amount.parse()?,
     ))
 }
-
-// impl TryFrom<&UiTransactionTokenBalance> for (WalletContext {
-//     type Error = Error;
-//
-//     fn try_from((balance, accounts): &UiTransactionTokenBalance) -> Result<Self, Self::Error> {
-//         Ok(WalletContext {
-//             wallet_address: accounts[balance.account_index as usize],
-//             wallet_owner: balance.owner.as_ref().map(|owner| Pubkey::from_str(owner.as_str())).transpose()?,
-//             token_mint: Pubkey::from_str(balance.mint.as_str())?
-//         })
-//     }
-// }
