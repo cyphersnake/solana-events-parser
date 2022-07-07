@@ -4,13 +4,13 @@ pub use solana_client::rpc_client::RpcClient;
 pub use solana_sdk::{
     clock::UnixTimestamp,
     instruction::{AccountMeta, Instruction},
+    message::VersionedMessage,
     pubkey::Pubkey,
     signature::Signature,
     slot_history::Slot,
 };
 pub use solana_transaction_status::{
-    EncodedConfirmedTransaction, EncodedTransactionWithStatusMeta, UiInstruction,
-    UiTransactionEncoding,
+    EncodedTransactionWithStatusMeta, UiInstruction, UiTransactionEncoding,
 };
 
 pub use crate::log_parser::{self, ProgramContext, ProgramLog};
@@ -48,12 +48,16 @@ impl BindInstructions for EncodedTransactionWithStatusMeta {
         &self,
         signature: Signature,
     ) -> Result<HashMap<InstructionContext, (Instruction, OuterInstruction)>, Error> {
-        let msg = self
+        let msg: VersionedMessage = self
             .transaction
             .decode()
             .ok_or(Error::ErrorWhileDecodeTransaction(signature))?
             .message;
-        let accounts = msg.account_keys.as_slice();
+
+        let accounts = match &msg {
+            VersionedMessage::Legacy(msg) => &msg.account_keys,
+            VersionedMessage::V0(msg) => &msg.account_keys,
+        };
 
         let mut call_index_map = HashMap::new();
         let mut get_and_update_call_index = move |program_id| {
@@ -81,7 +85,7 @@ impl BindInstructions for EncodedTransactionWithStatusMeta {
         );
 
         let mut result = HashMap::new();
-        for (ix_index, compiled_ix) in msg.instructions.iter().enumerate() {
+        for (ix_index, compiled_ix) in msg.instructions().iter().enumerate() {
             log::trace!("Start handling instruction with index: {}", ix_index);
 
             let program_id = accounts[compiled_ix.program_id_index as usize];
@@ -102,8 +106,8 @@ impl BindInstructions for EncodedTransactionWithStatusMeta {
                             .map(|&index| index as usize)
                             .map(|index| AccountMeta {
                                 pubkey: accounts[index],
-                                is_signer: msg.is_writable(index),
-                                is_writable: msg.is_signer(index),
+                                is_signer: msg.is_signer(index),
+                                is_writable: msg.is_maybe_writable(index),
                             })
                             .collect(),
                         data: compiled_ix.data.clone(),
@@ -127,7 +131,7 @@ impl BindInstructions for EncodedTransactionWithStatusMeta {
                                 .map(|&index| index as usize)
                                 .map(|index| AccountMeta {
                                     pubkey: accounts[index],
-                                    is_signer: msg.is_writable(index),
+                                    is_signer: msg.is_maybe_writable(index),
                                     is_writable: msg.is_signer(index),
                                 })
                                 .collect(),

@@ -1,11 +1,10 @@
 use std::{collections::HashMap, fmt::Debug, num::NonZeroU8, str::FromStr};
 
 use lazy_static::lazy_static;
-use regex::Regex;
-use serde::{Deserialize, Serialize};
-
 #[cfg(not(feature = "solana"))]
 pub use pubkey::Pubkey;
+use regex::Regex;
+use serde::{Deserialize, Serialize};
 #[cfg(feature = "solana")]
 pub use solana_sdk::pubkey::Pubkey;
 
@@ -16,7 +15,7 @@ lazy_static! {
     .expect("Failed to compile log regexp");
 }
 
-#[derive(Debug, thiserror::Error, PartialEq)]
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum Error {
     #[error(transparent)]
     Base58Error(#[from] bs58::decode::Error),
