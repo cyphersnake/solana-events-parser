@@ -20,10 +20,10 @@ serde = { version = "1.0.137", features = ["derive"] }
 serde_json = "1.0.81"
 anyhow = "1.0.32"
 async-trait = "0.1.53"
-tokio = "1.19.2"
+tokio = "1.14.1"
 
 solana-client = { version = "1.10.12", optional = true }
 solana-sdk = { version = "1.10.12", optional = true }
 solana-transaction-status = { version = "1.10.12", optional = true }
-anchor-lang = { version = "0.24.2", git = "ssh://git@github.com/debridge-finance/anchor.git", rev = "0ee6509", optional = true}
+anchor-lang = { version = "0.25", optional = true}
 base64 = { version = "0.13.0", optional = true }
