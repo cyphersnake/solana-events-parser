@@ -18,7 +18,6 @@ pub use solana_transaction_status::{
     EncodedTransactionWithStatusMeta, UiInstruction, UiTransactionEncoding,
 };
 
-use crate::instruction_parser::VersionedMessage;
 pub use crate::{
     instruction_parser::{BindInstructions, InstructionContext},
     log_parser::{self, ProgramContext, ProgramLog},
@@ -197,10 +196,6 @@ impl GetLamportsChanges for EncodedTransactionWithStatusMeta {
             .as_ref()
             .ok_or(Error::EmptyMetaInTransaction(*signature))?;
 
-        let accounts = match msg {
-            VersionedMessage::Legacy(msg) => msg.account_keys,
-            VersionedMessage::V0(msg) => msg.account_keys,
-        };
         Ok(meta
             .pre_balances
             .iter()
@@ -209,17 +204,25 @@ impl GetLamportsChanges for EncodedTransactionWithStatusMeta {
             .map(|(index, (old_balance, new_balance))| {
                 (index, *new_balance as i128 - *old_balance as i128)
             })
-            .map(|(index, diff)| (accounts[index], diff))
+            .map(|(index, diff)| (msg.static_account_keys()[index], diff))
             .collect())
     }
 }
 
-pub type TokenMint = Pubkey;
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct WalletContext {
     pub wallet_address: Pubkey,
     pub wallet_owner: Option<Pubkey>,
     pub token_mint: Pubkey,
+}
+impl WalletContext {
+    fn try_new(balance: &UiTransactionTokenBalance, accounts: &[Pubkey]) -> Result<Self, Error> {
+        Ok(WalletContext {
+            wallet_address: accounts[balance.account_index as usize],
+            wallet_owner: balance.owner.as_deref().map(Pubkey::from_str).transpose()?,
+            token_mint: Pubkey::from_str(balance.mint.as_str())?,
+        })
+    }
 }
 
 pub trait GetAssetsChanges {
@@ -243,49 +246,35 @@ impl GetAssetsChanges for EncodedTransactionWithStatusMeta {
             .as_ref()
             .ok_or(Error::EmptyMetaInTransaction(*signature))?;
 
-        let accounts = match msg {
-            VersionedMessage::Legacy(msg) => msg.account_keys,
-            VersionedMessage::V0(msg) => msg.account_keys,
+        let try_parse_balance = |balance: &UiTransactionTokenBalance| {
+            Ok((
+                WalletContext::try_new(balance, msg.static_account_keys())?,
+                balance.ui_token_amount.amount.parse()?,
+            ))
         };
+
         meta.pre_token_balances
             .as_ref()
             .zip(meta.post_token_balances.as_ref())
             .map(|(pre_token_balances, post_token_balances)| {
-                let mut result = post_token_balances
+                let balances_diff = post_token_balances
                     .iter()
-                    .map(|post_token_balance: &UiTransactionTokenBalance| {
-                        try_parse_balance(post_token_balance, accounts.as_slice())
-                    })
+                    .map(try_parse_balance)
                     .collect::<Result<HashMap<_, _>, Error>>()?;
 
-                for pre_token_balance in pre_token_balances {
-                    let (wallet_ctx, pre_balance) =
-                        try_parse_balance(pre_token_balance, accounts.as_slice())?;
-                    *result.get_mut(&wallet_ctx).ok_or(
-                        Error::WrongBalanceAccountConsistance(wallet_ctx.wallet_address),
-                    )? -= pre_balance;
-                }
+                pre_token_balances.iter().map(try_parse_balance).try_fold(
+                    balances_diff,
+                    |mut balances_diff, result_with_ctx| {
+                        let (wallet_ctx, pre_balance) = result_with_ctx?;
 
-                Ok(result)
+                        *balances_diff.get_mut(&wallet_ctx).ok_or(
+                            Error::WrongBalanceAccountConsistance(wallet_ctx.wallet_address),
+                        )? -= pre_balance;
+
+                        Ok(balances_diff)
+                    },
+                )
             })
             .unwrap_or_else(|| Ok(HashMap::default()))
     }
-}
-
-fn try_parse_balance(
-    balance: &UiTransactionTokenBalance,
-    accounts: &[Pubkey],
-) -> Result<(WalletContext, i128), Error> {
-    Ok((
-        WalletContext {
-            wallet_address: accounts[balance.account_index as usize],
-            wallet_owner: balance
-                .owner
-                .as_ref()
-                .map(|owner| Pubkey::from_str(owner.as_str()))
-                .transpose()?,
-            token_mint: Pubkey::from_str(balance.mint.as_str())?,
-        },
-        balance.ui_token_amount.amount.parse()?,
-    ))
 }

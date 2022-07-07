@@ -15,7 +15,7 @@ lazy_static! {
     .expect("Failed to compile log regexp");
 }
 
-#[derive(Debug, thiserror::Error, PartialEq)]
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum Error {
     #[error(transparent)]
     Base58Error(#[from] bs58::decode::Error),
