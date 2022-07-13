@@ -267,9 +267,7 @@ impl GetAssetsChanges for EncodedTransactionWithStatusMeta {
                     |mut balances_diff, result_with_ctx| {
                         let (wallet_ctx, pre_balance) = result_with_ctx?;
 
-                        *balances_diff.get_mut(&wallet_ctx).ok_or(
-                            Error::WrongBalanceAccountConsistance(wallet_ctx.wallet_address),
-                        )? -= pre_balance;
+                        *balances_diff.entry(wallet_ctx).or_insert(0) -= pre_balance;
 
                         Ok(balances_diff)
                     },
