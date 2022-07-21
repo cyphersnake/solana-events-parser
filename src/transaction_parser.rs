@@ -90,13 +90,14 @@ mod anchor {
     use std::io;
 
     use anchor_lang::{AnchorDeserialize, Discriminator, Owner};
+    use crate::instruction_parser::AccountMeta;
 
     use super::{ProgramLog, TransactionParsedMeta};
 
     impl TransactionParsedMeta {
         pub fn find_ix<I: Discriminator + Owner + AnchorDeserialize>(
             &self,
-        ) -> Result<Vec<(I, &Vec<ProgramLog>)>, io::Error> {
+        ) -> Result<Vec<(I, &Vec<ProgramLog>, Vec<AccountMeta>)>, io::Error> {
             use crate::ParseInstruction;
             self.meta
                 .iter()
@@ -104,7 +105,7 @@ mod anchor {
                 .filter_map(|(ix, logs)| {
                     Some(
                         ix.parse_instruction::<I>()?
-                            .map(|result_with_ix| (result_with_ix, logs)),
+                            .map(|result_with_ix| (result_with_ix, logs, ix.accounts.clone())),
                     )
                 })
                 .collect::<Result<_, _>>()
