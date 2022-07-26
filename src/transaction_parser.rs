@@ -11,11 +11,10 @@ pub use solana_sdk::{
     signature::Signature,
     slot_history::Slot,
 };
-use solana_transaction_status::{
-    EncodedConfirmedTransactionWithStatusMeta, UiTransactionTokenBalance,
-};
+
 pub use solana_transaction_status::{
-    EncodedTransactionWithStatusMeta, UiInstruction, UiTransactionEncoding,
+    EncodedConfirmedTransactionWithStatusMeta, EncodedTransactionWithStatusMeta, UiInstruction,
+    UiTransactionEncoding, UiTransactionTokenBalance
 };
 
 pub use crate::{
