@@ -55,6 +55,7 @@ pub trait BindTransactionLogs {
         signature: Signature,
     ) -> Result<HashMap<ProgramContext, Vec<ProgramLog>>, Error>;
 }
+
 #[async_trait]
 impl BindTransactionLogs for RpcClient {
     async fn bind_transaction_logs(
@@ -88,8 +89,8 @@ pub struct TransactionParsedMeta {
 mod anchor {
     use std::io;
 
-    use anchor_lang::{AnchorDeserialize, Discriminator, Owner};
     use crate::instruction_parser::AccountMeta;
+    use anchor_lang::{AnchorDeserialize, Discriminator, Owner};
 
     use super::{ProgramLog, TransactionParsedMeta};
 

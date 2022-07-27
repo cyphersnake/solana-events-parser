@@ -12,6 +12,7 @@ async fn main() -> Result<(), anyhow::Error> {
     {
         use std::{env, str::FromStr};
 
+        use solana_client::nonblocking::rpc_client::RpcClient;
         use solana_events_parser::transaction_parser::*;
 
         let meta = RpcClient::new("https://api.mainnet-beta.solana.com".to_string())
@@ -44,4 +45,15 @@ async fn main() -> Result<(), anyhow::Error> {
     println!("No action when solana feature disable");
 
     Ok(())
+}
+
+fn main() {
+    if let Err(err) = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("Failed to build tokio runtime")
+        .block_on(async_main())
+    {
+        eprintln!("Error: {err}");
+    }
 }
