@@ -89,24 +89,40 @@ pub struct TransactionParsedMeta {
 mod anchor {
     use std::io;
 
-    use crate::instruction_parser::AccountMeta;
-    use anchor_lang::{AnchorDeserialize, Discriminator, Owner};
+    use anchor_lang::{Accounts, AnchorDeserialize, Discriminator, Owner};
 
-    use super::{ProgramLog, TransactionParsedMeta};
+    use super::{ProgramLog, Pubkey, TransactionParsedMeta};
 
     impl TransactionParsedMeta {
-        pub fn find_ix<I: Discriminator + Owner + AnchorDeserialize>(
+        pub fn find_ix<
+            'a,
+            I: Discriminator + Owner + AnchorDeserialize,
+            const N: usize,
+            A: Accounts<'a> + From<[Pubkey; N]>,
+        >(
             &self,
-        ) -> Result<Vec<(I, &Vec<ProgramLog>, Vec<AccountMeta>)>, io::Error> {
+        ) -> Result<Vec<(I, &Vec<ProgramLog>, A)>, io::Error> {
             use crate::ParseInstruction;
             self.meta
                 .iter()
                 .filter_map(|(ctx, meta)| ctx.program_id.eq(&I::owner()).then(|| meta))
                 .filter_map(|(ix, logs)| {
-                    Some(
-                        ix.parse_instruction::<I>()?
-                            .map(|result_with_ix| (result_with_ix, logs, ix.accounts.clone())),
-                    )
+                    Some(ix.parse_instruction::<I>()?.map(|result_with_ix| {
+                        (
+                            result_with_ix,
+                            logs,
+                            A::from(
+                                <[Pubkey; N]>::try_from(
+                                    ix.accounts
+                                        .iter()
+                                        .map(|acc| acc.pubkey)
+                                        .take(N)
+                                        .collect::<Vec<_>>(),
+                                )
+                                .unwrap(),
+                            ),
+                        )
+                    }))
                 })
                 .collect::<Result<_, _>>()
         }
