@@ -88,6 +88,7 @@ pub struct TransactionParsedMeta {
 #[cfg(feature = "anchor")]
 mod anchor {
     use std::io;
+    use std::io::ErrorKind;
 
     use anchor_lang::{AnchorDeserialize, Discriminator, Owner};
 
@@ -115,24 +116,31 @@ mod anchor {
                     Some(
                         raw_instruction
                             .parse_instruction::<IX>()?
-                            .map(|instruction| DecompositInstruction {
-                                logs,
-                                accounts: ACCOUNTS::from(
-                                    <[Pubkey; ACCOUNTS_COUNT]>::try_from(
-                                        raw_instruction
-                                            .accounts
-                                            .iter()
-                                            .map(|acc| acc.pubkey)
-                                            .take(ACCOUNTS_COUNT)
-                                            .collect::<Vec<_>>(),
-                                    )
-                                    .unwrap(), // TODO
-                                ),
-                                ix: instruction,
+                            .map(|instruction| {
+                                Ok(DecompositInstruction {
+                                    logs,
+                                    accounts: ACCOUNTS::from(
+                                        <[Pubkey; ACCOUNTS_COUNT]>::try_from(
+                                            raw_instruction
+                                                .accounts
+                                                .iter()
+                                                .map(|acc| acc.pubkey)
+                                                .take(ACCOUNTS_COUNT)
+                                                .collect::<Vec<_>>(),
+                                        )
+                                        .map_err(|_| {
+                                            io::Error::new(
+                                                ErrorKind::InvalidData,
+                                                "Instruction accounts parsing error",
+                                            )
+                                        })?,
+                                    ),
+                                    ix: instruction,
+                                })
                             }),
                     )
                 })
-                .collect::<Result<_, _>>()
+                .collect::<Result<_, _>>()?
         }
     }
 }
