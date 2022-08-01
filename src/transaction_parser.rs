@@ -89,40 +89,48 @@ pub struct TransactionParsedMeta {
 mod anchor {
     use std::io;
 
-    use anchor_lang::{Accounts, AnchorDeserialize, Discriminator, Owner};
+    use anchor_lang::{AnchorDeserialize, Discriminator, Owner};
 
     use super::{ProgramLog, Pubkey, TransactionParsedMeta};
 
+    pub struct DecompositInstruction<'logs, IX, ACCOUNTS> {
+        pub ix: IX,
+        pub accounts: ACCOUNTS,
+        pub logs: &'logs Vec<ProgramLog>,
+    }
+
     impl TransactionParsedMeta {
         pub fn find_ix<
-            'a,
-            I: Discriminator + Owner + AnchorDeserialize,
-            const N: usize,
-            A: Accounts<'a> + From<[Pubkey; N]>,
+            const ACCOUNTS_COUNT: usize,
+            IX: Discriminator + Owner + AnchorDeserialize,
+            ACCOUNTS: From<[Pubkey; ACCOUNTS_COUNT]>,
         >(
             &self,
-        ) -> Result<Vec<(I, &Vec<ProgramLog>, A)>, io::Error> {
+        ) -> Result<Vec<DecompositInstruction<'_, IX, ACCOUNTS>>, io::Error> {
             use crate::ParseInstruction;
             self.meta
                 .iter()
-                .filter_map(|(ctx, meta)| ctx.program_id.eq(&I::owner()).then(|| meta))
-                .filter_map(|(ix, logs)| {
-                    Some(ix.parse_instruction::<I>()?.map(|result_with_ix| {
-                        (
-                            result_with_ix,
-                            logs,
-                            A::from(
-                                <[Pubkey; N]>::try_from(
-                                    ix.accounts
-                                        .iter()
-                                        .map(|acc| acc.pubkey)
-                                        .take(N)
-                                        .collect::<Vec<_>>(),
-                                )
-                                .unwrap(),
-                            ),
-                        )
-                    }))
+                .filter_map(|(ctx, meta)| ctx.program_id.eq(&IX::owner()).then(|| meta))
+                .filter_map(|(raw_instruction, logs)| {
+                    Some(
+                        raw_instruction
+                            .parse_instruction::<IX>()?
+                            .map(|instruction| DecompositInstruction {
+                                logs,
+                                accounts: ACCOUNTS::from(
+                                    <[Pubkey; ACCOUNTS_COUNT]>::try_from(
+                                        raw_instruction
+                                            .accounts
+                                            .iter()
+                                            .map(|acc| acc.pubkey)
+                                            .take(ACCOUNTS_COUNT)
+                                            .collect::<Vec<_>>(),
+                                    )
+                                    .unwrap(), // TODO
+                                ),
+                                ix: instruction,
+                            }),
+                    )
                 })
                 .collect::<Result<_, _>>()
         }
