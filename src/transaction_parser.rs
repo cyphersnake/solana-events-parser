@@ -101,7 +101,7 @@ mod anchor {
     }
 
     impl TransactionParsedMeta {
-        pub fn find_ix<
+        pub fn find_and_decompose_ix<
             const ACCOUNTS_COUNT: usize,
             IX: Discriminator + Owner + AnchorDeserialize,
             ACCOUNTS: From<[Pubkey; ACCOUNTS_COUNT]>,
