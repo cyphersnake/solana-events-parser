@@ -10,7 +10,7 @@ pub use solana_sdk::pubkey::Pubkey;
 
 lazy_static! {
     static ref LOG: Regex = Regex::new(
-        r"(?P<program_invoke>^Program (?P<invoke_program_id>[1-9A-HJ-NP-Za-km-z]{32,}) invoke \[(?P<level>\d+)\]$)|(?P<program_success_result>^Program (?P<success_result_program_id>[1-9A-HJ-NP-Za-km-z]{32,}) success$)|(?P<program_failed_result>^Program (?P<failed_result_program_id>[1-9A-HJ-NP-Za-km-z]{32,}) failed: (?P<failed_result_err>.*)$)|(?P<program_complete_failed_result>^Program failed to complete: (?P<failed_complete_error>.*)$)|(?P<program_log>^^Program log: (?P<log_message>.*)$)|(?P<program_data>^Program data: (?P<data>.*)$)|(?P<program_consumed>^Program (?P<consumed_program_id>[1-9A-HJ-NP-Za-km-z]{32,}) consumed (?P<consumed_compute_units>\d*) of (?P<all_computed_units>\d*) compute units$)"
+        r"(?P<log_truncated>^Log truncated$)|(?P<program_invoke>^Program (?P<invoke_program_id>[1-9A-HJ-NP-Za-km-z]{32,}) invoke \[(?P<level>\d+)\]$)|(?P<program_success_result>^Program (?P<success_result_program_id>[1-9A-HJ-NP-Za-km-z]{32,}) success$)|(?P<program_failed_result>^Program (?P<failed_result_program_id>[1-9A-HJ-NP-Za-km-z]{32,}) failed: (?P<failed_result_err>.*)$)|(?P<program_complete_failed_result>^Program failed to complete: (?P<failed_complete_error>.*)$)|(?P<program_log>^^Program log: (?P<log_message>(.*[\n]?)+))|(?P<program_data>^Program data: (?P<data>(.*[\n]?)+))|(?P<program_consumed>^Program (?P<consumed_program_id>[1-9A-HJ-NP-Za-km-z]{32,}) consumed (?P<consumed_compute_units>\d*) of (?P<all_computed_units>\d*) compute units$)|(?P<program_return>^Program return: (?P<return_program_id>[1-9A-HJ-NP-Za-km-z]{32,}) (?P<return_message>(.*[\n]?)+))"
     )
     .expect("Failed to compile log regexp");
 }
@@ -65,6 +65,7 @@ pub type Level = NonZeroU8;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Log {
+    Truncated,
     ProgramInvoke {
         program_id: Pubkey,
         level: Level,
@@ -82,6 +83,10 @@ pub enum Log {
     ProgramData {
         data: String,
     },
+    ProgramReturn {
+        program_id: Pubkey,
+        data: String,
+    },
     ProgramConsumed {
         program_id: Pubkey,
         consumed: usize,
@@ -95,7 +100,9 @@ impl Log {
             .captures(input)
             .ok_or_else(|| Error::BadLogLine(input.to_string()))?;
 
-        if capture.name("program_invoke").is_some() {
+        if capture.name("log_truncated").is_some() {
+            Ok(Log::Truncated)
+        } else if capture.name("program_invoke").is_some() {
             Ok(Log::ProgramInvoke {
                 program_id: Pubkey::from_str(
                     capture
@@ -139,6 +146,20 @@ impl Log {
             Ok(Log::ProgramFailedComplete {
                 err: capture
                     .name("failed_complete_error")
+                    .ok_or(Error::ErrorInRegexp)?
+                    .as_str()
+                    .to_owned(),
+            })
+        } else if capture.name("program_return").is_some() {
+            Ok(Log::ProgramReturn {
+                program_id: Pubkey::from_str(
+                    capture
+                        .name("return_program_id")
+                        .ok_or(Error::ErrorInRegexp)?
+                        .as_str(),
+                )?,
+                data: capture
+                    .name("return_message")
                     .ok_or(Error::ErrorInRegexp)?
                     .as_str()
                     .to_owned(),
@@ -188,8 +209,15 @@ impl Log {
 pub enum ProgramLog {
     Data(String),
     Log(String),
+    Return(ProgramReturn),
     Invoke(ProgramContext),
     Consumed { consumed: usize, all: usize },
+}
+
+#[derive(Clone, Hash, PartialEq, Eq, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct ProgramReturn {
+    pub program_id: Pubkey,
+    pub data: String,
 }
 
 #[derive(Clone, Copy, Hash, PartialEq, Eq, Debug, PartialOrd, Ord, Serialize, Deserialize)]
@@ -217,102 +245,111 @@ pub fn bind_events(
         call_index
     };
 
-    input.enumerate().try_fold(
-        HashMap::<ProgramContext, Vec<ProgramLog>>::new(),
-        |mut result, (index, log)| {
-            match log? {
-                Log::ProgramInvoke { program_id, level } => {
-                    let new_ctx = ProgramContext {
-                        program_id,
-                        invoke_level: level,
-                        call_index: get_and_update_call_index(program_id),
-                    };
-                    if let Ok(ctx) = last_at_stack(&programs_stack, index) {
-                        result
-                            .entry(ctx)
-                            .or_default()
-                            .push(ProgramLog::Invoke(new_ctx));
-                    }
-
-                    programs_stack.push(new_ctx);
-                    result
-                        .entry(last_at_stack(&programs_stack, index)?)
-                        .or_default();
-                }
-                Log::ProgramResult {
-                    program_id: finished_program_id,
-                    err: None,
-                } => match programs_stack.pop() {
-                    Some(ctx) if ctx.program_id.eq(&finished_program_id) => {}
-                    Some(ctx) => {
-                        return Err(Error::UnexpectedProgramResult {
-                            index,
-                            program_id: ctx.program_id,
-                            level: Some(ctx.invoke_level),
-                            expected_program: Some(finished_program_id),
-                        });
-                    }
-                    None => {
-                        return Err(Error::UnexpectedProgramResult {
-                            index,
-                            program_id: finished_program_id,
-                            level: None,
-                            expected_program: None,
-                        });
-                    }
-                },
-                Log::ProgramResult {
+    let mut result = HashMap::<ProgramContext, Vec<ProgramLog>>::new();
+    for (index, log) in input.enumerate() {
+        match log? {
+            Log::Truncated => {
+                log::debug!("\"Log truncated\" found at index {}", index);
+                break;
+            }
+            Log::ProgramInvoke { program_id, level } => {
+                let new_ctx = ProgramContext {
                     program_id,
-                    err: Some(err),
-                } => {
-                    return Err(Error::ErrorLog {
-                        program_id,
-                        err,
+                    invoke_level: level,
+                    call_index: get_and_update_call_index(program_id),
+                };
+                if let Ok(ctx) = last_at_stack(&programs_stack, index) {
+                    result
+                        .entry(ctx)
+                        .or_default()
+                        .push(ProgramLog::Invoke(new_ctx));
+                }
+
+                programs_stack.push(new_ctx);
+                result
+                    .entry(last_at_stack(&programs_stack, index)?)
+                    .or_default();
+            }
+            Log::ProgramResult {
+                program_id: finished_program_id,
+                err: None,
+            } => match programs_stack.pop() {
+                Some(ctx) if ctx.program_id.eq(&finished_program_id) => {}
+                Some(ctx) => {
+                    return Err(Error::UnexpectedProgramResult {
+                        index,
+                        program_id: ctx.program_id,
+                        level: Some(ctx.invoke_level),
+                        expected_program: Some(finished_program_id),
+                    });
+                }
+                None => {
+                    return Err(Error::UnexpectedProgramResult {
+                        index,
+                        program_id: finished_program_id,
+                        level: None,
+                        expected_program: None,
+                    });
+                }
+            },
+            Log::ProgramResult {
+                program_id,
+                err: Some(err),
+            } => {
+                return Err(Error::ErrorLog {
+                    program_id,
+                    err,
+                    index,
+                });
+            }
+            Log::ProgramFailedComplete { err } => {
+                return Err(Error::ErrorToCompleteLog { err, index });
+            }
+            Log::ProgramLog { log } => {
+                result
+                    .entry(last_at_stack(&programs_stack, index)?)
+                    .or_default()
+                    .push(ProgramLog::Log(log));
+            }
+            Log::ProgramReturn { program_id, data } => {
+                result
+                    .entry(last_at_stack(&programs_stack, index)?)
+                    .or_default()
+                    .push(ProgramLog::Return(ProgramReturn { program_id, data }));
+            }
+            Log::ProgramData { data } => result
+                .entry(last_at_stack(&programs_stack, index)?)
+                .or_default()
+                .push(ProgramLog::Data(data)),
+            Log::ProgramConsumed {
+                program_id,
+                consumed,
+                all,
+            } => {
+                let ctx = last_at_stack(&programs_stack, index)?;
+                if program_id.ne(&ctx.program_id) {
+                    return Err(Error::MissplaceConsumed {
+                        expected_program: Some(ctx.program_id),
+                        consumed_program_id: program_id,
                         index,
                     });
                 }
-                Log::ProgramFailedComplete { err } => {
-                    return Err(Error::ErrorToCompleteLog { err, index });
-                }
-                Log::ProgramLog { log } => {
-                    result
-                        .entry(last_at_stack(&programs_stack, index)?)
-                        .or_default()
-                        .push(ProgramLog::Log(log));
-                }
-                Log::ProgramData { data } => result
+                result
                     .entry(last_at_stack(&programs_stack, index)?)
                     .or_default()
-                    .push(ProgramLog::Data(data)),
-                Log::ProgramConsumed {
-                    program_id,
+                    .push(ProgramLog::Consumed { consumed, all });
+                log::info!(
+                    "Program {:?} at level {}, consumed {}, all: {}",
+                    bs58::encode(&ctx.program_id).into_string(),
+                    ctx.invoke_level,
                     consumed,
-                    all,
-                } => {
-                    let ctx = last_at_stack(&programs_stack, index)?;
-                    if program_id.ne(&ctx.program_id) {
-                        return Err(Error::MissplaceConsumed {
-                            expected_program: Some(ctx.program_id),
-                            consumed_program_id: program_id,
-                            index,
-                        });
-                    }
-                    result
-                        .entry(last_at_stack(&programs_stack, index)?)
-                        .or_default()
-                        .push(ProgramLog::Consumed { consumed, all });
-                    log::info!(
-                        "Program {:?} at level {}, consumed {}, all: {}",
-                        bs58::encode(&ctx.program_id).into_string(),
-                        ctx.invoke_level,
-                        consumed,
-                        all
-                    );
-                }
-            };
-            Ok(result)
-        },
-    )
+                    all
+                );
+            }
+        };
+    }
+
+    Ok(result)
 }
 
 pub fn parse_events(input: &[String]) -> Result<HashMap<ProgramContext, Vec<ProgramLog>>, Error> {
@@ -324,7 +361,13 @@ mod log_test {
     use std::{collections::BTreeMap, str::FromStr};
 
     use super::*;
-
+    #[test]
+    fn test_truncated() {
+        assert_eq!(
+            Log::new("Log truncated").expect("Failed to check log"),
+            Log::Truncated
+        );
+    }
     #[test]
     fn test_invoke() {
         assert_eq!(
@@ -355,6 +398,73 @@ mod log_test {
             Log::new("Program log: Instruction Deposit").expect("Failed to check log"),
             Log::ProgramLog {
                 log: "Instruction Deposit".to_owned(),
+            }
+        );
+    }
+    #[test]
+    fn test_return() {
+        assert_eq!(
+            Log::new("Program return: M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K Some return")
+                .expect("Failed to check log"),
+            Log::ProgramReturn {
+                program_id: Pubkey::from_str("M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K")
+                    .unwrap(),
+                data: "Some return".to_owned(),
+            }
+        );
+    }
+    #[test]
+    fn test_return_multiline() {
+        assert_eq!(
+            Log::new(
+                "Program return: M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K Some return
+            newline return
+            more newline return"
+            )
+            .expect("Failed to check log"),
+            Log::ProgramReturn {
+                program_id: Pubkey::from_str("M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K")
+                    .unwrap(),
+                data: "Some return
+            newline return
+            more newline return"
+                    .to_owned(),
+            }
+        );
+    }
+    #[test]
+    fn test_log_multiline() {
+        assert_eq!(
+            Log::new(
+                "Program log: Instruction Deposit
+            Yet another instruction Deposit 1
+            Yet another instruction Deposit 2
+            Yet another instruction Deposit 3"
+            )
+            .expect("Failed to check log"),
+            Log::ProgramLog {
+                log: "Instruction Deposit
+            Yet another instruction Deposit 1
+            Yet another instruction Deposit 2
+            Yet another instruction Deposit 3"
+                    .to_owned(),
+            }
+        );
+    }
+    #[test]
+    fn test_data_multiline() {
+        assert_eq!(
+            Log::new(
+                "Program data: DATADATADATA
+            MOREDATA
+            SOMEMOREDATA"
+            )
+            .expect("Failed to check log"),
+            Log::ProgramData {
+                data: "DATADATADATA
+            MOREDATA
+            SOMEMOREDATA"
+                    .to_owned(),
             }
         );
     }
@@ -483,8 +593,9 @@ Program BRTbgHnC2AWfumCBU6ExthDie912RiDyiS3uXgMPQPQN consumed 170835 of 170835 c
 Program failed to complete: exceeded maximum number of instructions allowed (170835) at instruction #40861
 Program BRTbgHnC2AWfumCBU6ExthDie912RiDyiS3uXgMPQPQN failed: Program failed to complete
 Program BRTbgHnC2AWfumCBU6ExthDie912RiDyiS3uXgMPQPQN consumed 200000 of 200000 compute units
-Program BRTbgHnC2AWfumCBU6ExthDie912RiDyiS3uXgMPQPQN failed: Program failed to complete"##;
-
+Program BRTbgHnC2AWfumCBU6ExthDie912RiDyiS3uXgMPQPQN failed: Program failed to complete
+Program return: BRTbgHnC2AWfumCBU6ExthDie912RiDyiS3uXgMPQ123 some return
+Log truncated"##;
     #[test]
     fn test_parse() {
         let errors = INPUT
@@ -581,6 +692,110 @@ Program M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K success"##;
                 vec![],
             ),
         ]
+        .into_iter()
+        .collect::<BTreeMap<_, _>>();
+
+        assert_eq!(expected, program_events);
+
+        let program = r##"Program M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K invoke [1]
+Program log: Instruction: Deposit
+Program 11111111111111111111111111111111 invoke [2]
+Program 11111111111111111111111111111111 success
+Program M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K consumed 9297 of 1400000 compute units
+Program M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K success
+Program M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K invoke [1]
+Program log: Instruction: Buy
+Log truncated
+Program 11111111111111111111111111111111 invoke [2]
+Program 11111111111111111111111111111111 success
+Program log: {"price":17800000000,"buyer_expiry":0}
+Program M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K consumed 24562 of 1390703 compute units
+Program M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K success"##;
+        let program_events = super::parse_events(
+            &program
+                .split('\n')
+                .map(|s| s.to_owned())
+                .collect::<Vec<_>>(),
+        )
+        .unwrap()
+        .into_iter()
+        .collect::<BTreeMap<_, _>>();
+        let expected = [
+            (
+                ProgramContext {
+                    program_id: Pubkey::from_str("M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K")
+                        .unwrap(),
+                    call_index: 0,
+                    invoke_level: Level::new(1).unwrap(),
+                },
+                vec![
+                    ProgramLog::Log("Instruction: Deposit".to_owned()),
+                    ProgramLog::Invoke(ProgramContext {
+                        program_id: Pubkey::from_str("11111111111111111111111111111111").unwrap(),
+                        call_index: 0,
+                        invoke_level: Level::new(2).unwrap(),
+                    }),
+                    ProgramLog::Consumed {
+                        consumed: 9297,
+                        all: 1400000,
+                    },
+                ],
+            ),
+            (
+                ProgramContext {
+                    program_id: Pubkey::from_str("11111111111111111111111111111111").unwrap(),
+                    call_index: 0,
+                    invoke_level: Level::new(2).unwrap(),
+                },
+                vec![],
+            ),
+            (
+                ProgramContext {
+                    program_id: Pubkey::from_str("M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K")
+                        .unwrap(),
+                    call_index: 1,
+                    invoke_level: Level::new(1).unwrap(),
+                },
+                vec![ProgramLog::Log("Instruction: Buy".to_owned())],
+            ),
+        ]
+        .into_iter()
+        .collect::<BTreeMap<_, _>>();
+
+        assert_eq!(expected, program_events);
+
+        let program = r##"Program M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K invoke [1]
+Program return: M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K Some return
+Program M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K consumed 9297 of 1400000 compute units
+Program M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K success"##;
+        let program_events = super::parse_events(
+            &program
+                .split('\n')
+                .map(|s| s.to_owned())
+                .collect::<Vec<_>>(),
+        )
+        .unwrap()
+        .into_iter()
+        .collect::<BTreeMap<_, _>>();
+        let expected = [(
+            ProgramContext {
+                program_id: Pubkey::from_str("M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K")
+                    .unwrap(),
+                call_index: 0,
+                invoke_level: Level::new(1).unwrap(),
+            },
+            vec![
+                ProgramLog::Return(ProgramReturn {
+                    program_id: Pubkey::from_str("M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K")
+                        .unwrap(),
+                    data: "Some return".to_owned(),
+                }),
+                ProgramLog::Consumed {
+                    consumed: 9297,
+                    all: 1400000,
+                },
+            ],
+        )]
         .into_iter()
         .collect::<BTreeMap<_, _>>();
 
