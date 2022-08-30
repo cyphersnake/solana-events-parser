@@ -1,7 +1,8 @@
 use anyhow::anyhow;
 use simple_logger::SimpleLogger;
 
-async fn async_main() -> Result<(), anyhow::Error> {
+#[tokio::main]
+async fn main() -> Result<(), anyhow::Error> {
     SimpleLogger::new()
         .env()
         .init()
@@ -43,15 +44,4 @@ async fn async_main() -> Result<(), anyhow::Error> {
     println!("No action when solana feature disable");
 
     Ok(())
-}
-
-fn main() {
-    if let Err(err) = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .expect("Failed to build tokio runtime")
-        .block_on(async_main())
-    {
-        eprintln!("Error: {err}");
-    }
 }

@@ -94,7 +94,7 @@ mod anchor {
 
     use super::{ProgramLog, Pubkey, TransactionParsedMeta};
 
-    pub struct DecompositInstruction<'logs, IX, ACCOUNTS> {
+    pub struct DecomposedInstruction<'logs, IX, ACCOUNTS> {
         pub ix: IX,
         pub accounts: ACCOUNTS,
         pub logs: &'logs Vec<ProgramLog>,
@@ -107,7 +107,7 @@ mod anchor {
             ACCOUNTS: From<[Pubkey; ACCOUNTS_COUNT]>,
         >(
             &self,
-        ) -> Result<Vec<DecompositInstruction<'_, IX, ACCOUNTS>>, io::Error> {
+        ) -> Result<Vec<DecomposedInstruction<'_, IX, ACCOUNTS>>, io::Error> {
             use crate::ParseInstruction;
             self.meta
                 .iter()
@@ -117,7 +117,7 @@ mod anchor {
                         raw_instruction
                             .parse_instruction::<IX>()?
                             .map(|instruction| {
-                                Ok(DecompositInstruction {
+                                Ok(DecomposedInstruction {
                                     logs,
                                     accounts: ACCOUNTS::from(
                                         <[Pubkey; ACCOUNTS_COUNT]>::try_from(
@@ -128,12 +128,17 @@ mod anchor {
                                                 .take(ACCOUNTS_COUNT)
                                                 .collect::<Vec<_>>(),
                                         )
-                                        .map_err(|_| {
-                                            io::Error::new(
-                                                ErrorKind::InvalidData,
-                                                "Instruction accounts parsing error",
-                                            )
-                                        })?,
+                                        .map_err(
+                                            |err| {
+                                                io::Error::new(
+                                                    ErrorKind::InvalidData,
+                                                    format!(
+                                                        "Instruction accounts parsing error:{:?}",
+                                                        err
+                                                    ),
+                                                )
+                                            },
+                                        )?,
                                     ),
                                     ix: instruction,
                                 })
