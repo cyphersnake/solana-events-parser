@@ -14,7 +14,7 @@ pub use solana_sdk::{
 
 pub use solana_transaction_status::{
     EncodedConfirmedTransactionWithStatusMeta, EncodedTransactionWithStatusMeta, UiInstruction,
-    UiTransactionEncoding, UiTransactionTokenBalance
+    UiTransactionEncoding, UiTransactionTokenBalance,
 };
 
 pub use crate::{

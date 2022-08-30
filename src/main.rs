@@ -21,12 +21,12 @@ async fn async_main() -> Result<(), anyhow::Error> {
                     "Signatures not provided, Use first argument for provide transaction signature"
                 )
                 })?)
-                    .map_err(|err| {
-                        anyhow!(
+                .map_err(|err| {
+                    anyhow!(
                         "Error while parsing argument as transaction signature: {}",
                         err
                     )
-                    })?,
+                })?,
             )
             .await
             .map_err(|err| anyhow!("Error while bind transaction instructions: {}", err))?
