@@ -54,10 +54,7 @@ impl BindInstructions for EncodedTransactionWithStatusMeta {
             .ok_or(Error::ErrorWhileDecodeTransaction(signature))?
             .message;
 
-        let accounts = match &msg {
-            VersionedMessage::Legacy(msg) => &msg.account_keys,
-            VersionedMessage::V0(msg) => &msg.account_keys,
-        };
+        let accounts = msg.static_account_keys();
 
         let mut call_index_map = HashMap::new();
         let mut get_and_update_call_index = move |program_id| {
@@ -131,8 +128,8 @@ impl BindInstructions for EncodedTransactionWithStatusMeta {
                                 .map(|&index| index as usize)
                                 .map(|index| AccountMeta {
                                     pubkey: accounts[index],
-                                    is_signer: msg.is_maybe_writable(index),
-                                    is_writable: msg.is_signer(index),
+                                    is_signer: msg.is_signer(index),
+                                    is_writable: msg.is_maybe_writable(index),
                                 })
                                 .collect(),
                             data: bs58::decode(&compiled.data)

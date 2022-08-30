@@ -11,11 +11,10 @@ pub use solana_sdk::{
     signature::Signature,
     slot_history::Slot,
 };
-use solana_transaction_status::{
-    EncodedConfirmedTransactionWithStatusMeta, UiTransactionTokenBalance,
-};
+
 pub use solana_transaction_status::{
-    EncodedTransactionWithStatusMeta, UiInstruction, UiTransactionEncoding,
+    EncodedConfirmedTransactionWithStatusMeta, EncodedTransactionWithStatusMeta, UiInstruction,
+    UiTransactionEncoding, UiTransactionTokenBalance,
 };
 
 pub use crate::{
@@ -56,6 +55,7 @@ pub trait BindTransactionLogs {
         signature: Signature,
     ) -> Result<HashMap<ProgramContext, Vec<ProgramLog>>, Error>;
 }
+
 #[async_trait]
 impl BindTransactionLogs for RpcClient {
     async fn bind_transaction_logs(
@@ -88,26 +88,64 @@ pub struct TransactionParsedMeta {
 #[cfg(feature = "anchor")]
 mod anchor {
     use std::io;
+    use std::io::ErrorKind;
 
     use anchor_lang::{AnchorDeserialize, Discriminator, Owner};
 
-    use super::{ProgramLog, TransactionParsedMeta};
+    use super::{ProgramLog, Pubkey, TransactionParsedMeta};
+
+    pub struct DecomposedInstruction<'logs, IX, ACCOUNTS> {
+        pub ix: IX,
+        pub accounts: ACCOUNTS,
+        pub logs: &'logs Vec<ProgramLog>,
+    }
 
     impl TransactionParsedMeta {
-        pub fn find_ix<I: Discriminator + Owner + AnchorDeserialize>(
+        pub fn find_and_decompose_ix<
+            const ACCOUNTS_COUNT: usize,
+            IX: Discriminator + Owner + AnchorDeserialize,
+            ACCOUNTS: From<[Pubkey; ACCOUNTS_COUNT]>,
+        >(
             &self,
-        ) -> Result<Vec<(I, &Vec<ProgramLog>)>, io::Error> {
+        ) -> Result<Vec<DecomposedInstruction<'_, IX, ACCOUNTS>>, io::Error> {
             use crate::ParseInstruction;
             self.meta
                 .iter()
-                .filter_map(|(ctx, meta)| ctx.program_id.eq(&I::owner()).then(|| meta))
-                .filter_map(|(ix, logs)| {
+                .filter_map(|(ctx, meta)| ctx.program_id.eq(&IX::owner()).then(|| meta))
+                .filter_map(|(raw_instruction, logs)| {
                     Some(
-                        ix.parse_instruction::<I>()?
-                            .map(|result_with_ix| (result_with_ix, logs)),
+                        raw_instruction
+                            .parse_instruction::<IX>()?
+                            .map(|instruction| {
+                                Ok(DecomposedInstruction {
+                                    logs,
+                                    accounts: ACCOUNTS::from(
+                                        <[Pubkey; ACCOUNTS_COUNT]>::try_from(
+                                            raw_instruction
+                                                .accounts
+                                                .iter()
+                                                .map(|acc| acc.pubkey)
+                                                .take(ACCOUNTS_COUNT)
+                                                .collect::<Vec<_>>(),
+                                        )
+                                        .map_err(
+                                            |err| {
+                                                io::Error::new(
+                                                    ErrorKind::InvalidData,
+                                                    format!(
+                                                        "Instruction accounts parsing error:{:?}",
+                                                        err
+                                                    ),
+                                                )
+                                            },
+                                        )?,
+                                    ),
+                                    ix: instruction,
+                                })
+                            }),
                     )
                 })
-                .collect::<Result<_, _>>()
+                .collect::<Result<_, _>>()?
         }
     }
 }
