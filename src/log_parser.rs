@@ -10,7 +10,7 @@ pub use solana_sdk::pubkey::Pubkey;
 
 lazy_static! {
     static ref LOG: Regex = Regex::new(
-        r"(?P<upgraded_program>^Upgraded program (?P<upgraded_program_id>[1-9A-HJ-NP-Za-km-z]{32,})$)|(?P<log_truncated>^Log truncated$)|(?P<program_invoke>^Program (?P<invoke_program_id>[1-9A-HJ-NP-Za-km-z]{32,}) invoke \[(?P<level>\d+)\]$)|(?P<program_success_result>^Program (?P<success_result_program_id>[1-9A-HJ-NP-Za-km-z]{32,}) success$)|(?P<program_failed_result>^Program (?P<failed_result_program_id>[1-9A-HJ-NP-Za-km-z]{32,}) failed: (?P<failed_result_err>.*)$)|(?P<program_complete_failed_result>^Program failed to complete: (?P<failed_complete_error>.*)$)|(?P<program_log>^^Program log: (?P<log_message>(.*[\n]?)+))|(?P<program_data>^Program data: (?P<data>(.*[\n]?)+))|(?P<program_consumed>^Program (?P<consumed_program_id>[1-9A-HJ-NP-Za-km-z]{32,}) consumed (?P<consumed_compute_units>\d*) of (?P<all_computed_units>\d*) compute units$)|(?P<program_return>^Program return: (?P<return_program_id>[1-9A-HJ-NP-Za-km-z]{32,}) (?P<return_message>(.*[\n]?)+))"
+        r"(?P<deployed_program>^Deployed program (?P<deployed_program_id>[1-9A-HJ-NP-Za-km-z]{32,})$)|(?P<upgraded_program>^Upgraded program (?P<upgraded_program_id>[1-9A-HJ-NP-Za-km-z]{32,})$)|(?P<log_truncated>^Log truncated$)|(?P<program_invoke>^Program (?P<invoke_program_id>[1-9A-HJ-NP-Za-km-z]{32,}) invoke \[(?P<level>\d+)\]$)|(?P<program_success_result>^Program (?P<success_result_program_id>[1-9A-HJ-NP-Za-km-z]{32,}) success$)|(?P<program_failed_result>^Program (?P<failed_result_program_id>[1-9A-HJ-NP-Za-km-z]{32,}) failed: (?P<failed_result_err>.*)$)|(?P<program_complete_failed_result>^Program failed to complete: (?P<failed_complete_error>.*)$)|(?P<program_log>^^Program log: (?P<log_message>(.*[\n]?)+))|(?P<program_data>^Program data: (?P<data>(.*[\n]?)+))|(?P<program_consumed>^Program (?P<consumed_program_id>[1-9A-HJ-NP-Za-km-z]{32,}) consumed (?P<consumed_compute_units>\d*) of (?P<all_computed_units>\d*) compute units$)|(?P<program_return>^Program return: (?P<return_program_id>[1-9A-HJ-NP-Za-km-z]{32,}) (?P<return_message>(.*[\n]?)+))"
     )
     .expect("Failed to compile log regexp");
 }
@@ -65,6 +65,9 @@ pub type Level = NonZeroU8;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Log {
+    DeployedProgram {
+        program_id: Pubkey,
+    },
     UpgradedProgram {
         program_id: Pubkey,
     },
@@ -103,7 +106,16 @@ impl Log {
             .captures(input)
             .ok_or_else(|| Error::BadLogLine(input.to_string()))?;
 
-        if capture.name("upgraded_program").is_some() {
+        if capture.name("deployed_program").is_some() {
+            Ok(Log::DeployedProgram {
+                program_id: Pubkey::from_str(
+                    capture
+                        .name("deployed_program_id")
+                        .ok_or(Error::ErrorInRegexp)?
+                        .as_str(),
+                )?,
+            })
+        } else if capture.name("upgraded_program").is_some() {
             Ok(Log::UpgradedProgram {
                 program_id: Pubkey::from_str(
                     capture
@@ -219,10 +231,11 @@ impl Log {
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProgramLog {
+    DeployedProgram(Pubkey),
+    UpgradedProgram(Pubkey),
     Data(String),
     Log(String),
     Return(ProgramReturn),
-    Upgraded(Pubkey),
     Invoke(ProgramContext),
     Consumed { consumed: usize, all: usize },
 }
@@ -261,11 +274,17 @@ pub fn bind_events(
     let mut result = HashMap::<ProgramContext, Vec<ProgramLog>>::new();
     for (index, log) in input.enumerate() {
         match log? {
+            Log::DeployedProgram {program_id} => {
+                result
+                    .entry(last_at_stack(&programs_stack, index)?)
+                    .or_default()
+                    .push(ProgramLog::DeployedProgram(program_id));
+            }
             Log::UpgradedProgram {program_id} => {
                 result
                     .entry(last_at_stack(&programs_stack, index)?)
                     .or_default()
-                    .push(ProgramLog::Upgraded(program_id));
+                    .push(ProgramLog::UpgradedProgram(program_id));
             }
             Log::Truncated => {
                 log::debug!("\"Log truncated\" found at index {}", index);
@@ -380,6 +399,16 @@ mod log_test {
     use std::{collections::BTreeMap, str::FromStr};
     use super::*;
 
+    #[test]
+    fn test_deployed_program() {
+        assert_eq!(
+            Log::new("Deployed program 2nKWpT1RALNJEYZE9znyRzLaJFUCWqumXGM7DWbYoPKx").expect("Failed to check log"),
+            Log::DeployedProgram {
+                program_id: Pubkey::from_str("2nKWpT1RALNJEYZE9znyRzLaJFUCWqumXGM7DWbYoPKx")
+                    .unwrap(),
+            }
+        );
+    }
     #[test]
     fn test_upgraded_program() {
         assert_eq!(
