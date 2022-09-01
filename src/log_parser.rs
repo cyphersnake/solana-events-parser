@@ -10,7 +10,7 @@ pub use solana_sdk::pubkey::Pubkey;
 
 lazy_static! {
     static ref LOG: Regex = Regex::new(
-        r"(?P<log_truncated>^Log truncated$)|(?P<program_invoke>^Program (?P<invoke_program_id>[1-9A-HJ-NP-Za-km-z]{32,}) invoke \[(?P<level>\d+)\]$)|(?P<program_success_result>^Program (?P<success_result_program_id>[1-9A-HJ-NP-Za-km-z]{32,}) success$)|(?P<program_failed_result>^Program (?P<failed_result_program_id>[1-9A-HJ-NP-Za-km-z]{32,}) failed: (?P<failed_result_err>.*)$)|(?P<program_complete_failed_result>^Program failed to complete: (?P<failed_complete_error>.*)$)|(?P<program_log>^^Program log: (?P<log_message>(.*[\n]?)+))|(?P<program_data>^Program data: (?P<data>(.*[\n]?)+))|(?P<program_consumed>^Program (?P<consumed_program_id>[1-9A-HJ-NP-Za-km-z]{32,}) consumed (?P<consumed_compute_units>\d*) of (?P<all_computed_units>\d*) compute units$)|(?P<program_return>^Program return: (?P<return_program_id>[1-9A-HJ-NP-Za-km-z]{32,}) (?P<return_message>(.*[\n]?)+))"
+        r"(?P<deployed_program>^Deployed program (?P<deployed_program_id>[1-9A-HJ-NP-Za-km-z]{32,})$)|(?P<upgraded_program>^Upgraded program (?P<upgraded_program_id>[1-9A-HJ-NP-Za-km-z]{32,})$)|(?P<log_truncated>^Log truncated$)|(?P<program_invoke>^Program (?P<invoke_program_id>[1-9A-HJ-NP-Za-km-z]{32,}) invoke \[(?P<level>\d+)\]$)|(?P<program_success_result>^Program (?P<success_result_program_id>[1-9A-HJ-NP-Za-km-z]{32,}) success$)|(?P<program_failed_result>^Program (?P<failed_result_program_id>[1-9A-HJ-NP-Za-km-z]{32,}) failed: (?P<failed_result_err>.*)$)|(?P<program_complete_failed_result>^Program failed to complete: (?P<failed_complete_error>.*)$)|(?P<program_log>^^Program log: (?P<log_message>(.*[\n]?)+))|(?P<program_data>^Program data: (?P<data>(.*[\n]?)+))|(?P<program_consumed>^Program (?P<consumed_program_id>[1-9A-HJ-NP-Za-km-z]{32,}) consumed (?P<consumed_compute_units>\d*) of (?P<all_computed_units>\d*) compute units$)|(?P<program_return>^Program return: (?P<return_program_id>[1-9A-HJ-NP-Za-km-z]{32,}) (?P<return_message>(.*[\n]?)+))"
     )
     .expect("Failed to compile log regexp");
 }
@@ -65,6 +65,12 @@ pub type Level = NonZeroU8;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Log {
+    DeployedProgram {
+        program_id: Pubkey,
+    },
+    UpgradedProgram {
+        program_id: Pubkey,
+    },
     Truncated,
     ProgramInvoke {
         program_id: Pubkey,
@@ -100,7 +106,25 @@ impl Log {
             .captures(input)
             .ok_or_else(|| Error::BadLogLine(input.to_string()))?;
 
-        if capture.name("log_truncated").is_some() {
+        if capture.name("deployed_program").is_some() {
+            Ok(Log::DeployedProgram {
+                program_id: Pubkey::from_str(
+                    capture
+                        .name("deployed_program_id")
+                        .ok_or(Error::ErrorInRegexp)?
+                        .as_str(),
+                )?,
+            })
+        } else if capture.name("upgraded_program").is_some() {
+            Ok(Log::UpgradedProgram {
+                program_id: Pubkey::from_str(
+                    capture
+                        .name("upgraded_program_id")
+                        .ok_or(Error::ErrorInRegexp)?
+                        .as_str(),
+                )?,
+            })
+        } else if capture.name("log_truncated").is_some() {
             Ok(Log::Truncated)
         } else if capture.name("program_invoke").is_some() {
             Ok(Log::ProgramInvoke {
@@ -207,6 +231,8 @@ impl Log {
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProgramLog {
+    DeployedProgram(Pubkey),
+    UpgradedProgram(Pubkey),
     Data(String),
     Log(String),
     Return(ProgramReturn),
@@ -248,6 +274,18 @@ pub fn bind_events(
     let mut result = HashMap::<ProgramContext, Vec<ProgramLog>>::new();
     for (index, log) in input.enumerate() {
         match log? {
+            Log::DeployedProgram { program_id } => {
+                result
+                    .entry(last_at_stack(&programs_stack, index)?)
+                    .or_default()
+                    .push(ProgramLog::DeployedProgram(program_id));
+            }
+            Log::UpgradedProgram { program_id } => {
+                result
+                    .entry(last_at_stack(&programs_stack, index)?)
+                    .or_default()
+                    .push(ProgramLog::UpgradedProgram(program_id));
+            }
             Log::Truncated => {
                 log::debug!("\"Log truncated\" found at index {}", index);
                 break;
@@ -358,9 +396,31 @@ pub fn parse_events(input: &[String]) -> Result<HashMap<ProgramContext, Vec<Prog
 
 #[cfg(test)]
 mod log_test {
+    use super::*;
     use std::{collections::BTreeMap, str::FromStr};
 
-    use super::*;
+    #[test]
+    fn test_deployed_program() {
+        assert_eq!(
+            Log::new("Deployed program 2nKWpT1RALNJEYZE9znyRzLaJFUCWqumXGM7DWbYoPKx")
+                .expect("Failed to check log"),
+            Log::DeployedProgram {
+                program_id: Pubkey::from_str("2nKWpT1RALNJEYZE9znyRzLaJFUCWqumXGM7DWbYoPKx")
+                    .unwrap(),
+            }
+        );
+    }
+    #[test]
+    fn test_upgraded_program() {
+        assert_eq!(
+            Log::new("Upgraded program 2nKWpT1RALNJEYZE9znyRzLaJFUCWqumXGM7DWbYoPKx")
+                .expect("Failed to check log"),
+            Log::UpgradedProgram {
+                program_id: Pubkey::from_str("2nKWpT1RALNJEYZE9znyRzLaJFUCWqumXGM7DWbYoPKx")
+                    .unwrap(),
+            }
+        );
+    }
     #[test]
     fn test_truncated() {
         assert_eq!(
@@ -729,6 +789,93 @@ Program M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K success"##;
                 },
             ],
         )]
+        .into_iter()
+        .collect::<BTreeMap<_, _>>();
+
+        assert_eq!(expected, program_events);
+
+        let program = r##"Program BPFLoaderUpgradeab1e11111111111111111111111 invoke [1]
+Upgraded program 2nKWpT1RALNJEYZE9znyRzLaJFUCWqumXGM7DWbYoPKx
+Program BPFLoaderUpgradeab1e11111111111111111111111 success"##;
+
+        let program_events = super::parse_events(
+            &program
+                .split('\n')
+                .map(|s| s.to_owned())
+                .collect::<Vec<_>>(),
+        )
+        .unwrap()
+        .into_iter()
+        .collect::<BTreeMap<_, _>>();
+        let expected = [(
+            ProgramContext {
+                program_id: Pubkey::from_str("BPFLoaderUpgradeab1e11111111111111111111111")
+                    .unwrap(),
+                call_index: 0,
+                invoke_level: Level::new(1).unwrap(),
+            },
+            vec![ProgramLog::UpgradedProgram(
+                Pubkey::from_str("2nKWpT1RALNJEYZE9znyRzLaJFUCWqumXGM7DWbYoPKx").unwrap(),
+            )],
+        )]
+        .into_iter()
+        .collect::<BTreeMap<_, _>>();
+
+        assert_eq!(expected, program_events);
+
+        let program = r##"Program 11111111111111111111111111111111 invoke [1]
+Program 11111111111111111111111111111111 success
+Program BPFLoaderUpgradeab1e11111111111111111111111 invoke [1]
+Program 11111111111111111111111111111111 invoke [2]
+Program 11111111111111111111111111111111 success
+Deployed program 9H9dXYU1NBMqsZZpUnztavyeiD2Sr7Xw3YLQCCSgvbwX
+Program BPFLoaderUpgradeab1e11111111111111111111111 success"##;
+
+        let program_events = super::parse_events(
+            &program
+                .split('\n')
+                .map(|s| s.to_owned())
+                .collect::<Vec<_>>(),
+        )
+        .unwrap()
+        .into_iter()
+        .collect::<BTreeMap<_, _>>();
+        let expected = [
+            (
+                ProgramContext {
+                    program_id: Pubkey::from_str("11111111111111111111111111111111").unwrap(),
+                    call_index: 0,
+                    invoke_level: Level::new(1).unwrap(),
+                },
+                vec![],
+            ),
+            (
+                ProgramContext {
+                    program_id: Pubkey::from_str("11111111111111111111111111111111").unwrap(),
+                    call_index: 1,
+                    invoke_level: Level::new(2).unwrap(),
+                },
+                vec![],
+            ),
+            (
+                ProgramContext {
+                    program_id: Pubkey::from_str("BPFLoaderUpgradeab1e11111111111111111111111")
+                        .unwrap(),
+                    call_index: 0,
+                    invoke_level: Level::new(1).unwrap(),
+                },
+                vec![
+                    ProgramLog::Invoke(ProgramContext {
+                        program_id: Pubkey::from_str("11111111111111111111111111111111").unwrap(),
+                        call_index: 1,
+                        invoke_level: Level::new(2).unwrap(),
+                    }),
+                    ProgramLog::DeployedProgram(
+                        Pubkey::from_str("9H9dXYU1NBMqsZZpUnztavyeiD2Sr7Xw3YLQCCSgvbwX").unwrap(),
+                    ),
+                ],
+            ),
+        ]
         .into_iter()
         .collect::<BTreeMap<_, _>>();
 
