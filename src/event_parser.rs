@@ -26,7 +26,7 @@ impl ParseEvent for ProgramLog {
                 let bytes = base64::decode(&log)
                     .map_err(|_| log::warn!("Provided log line not decodable as bs64"))
                     .ok()
-                    .filter(|bytes| bytes.len() > DISCRIMINATOR_SIZE)?;
+                    .filter(|bytes| bytes.len() >= DISCRIMINATOR_SIZE)?;
                 let (discriminantor, event) = bytes.split_at(DISCRIMINATOR_SIZE);
                 E::discriminator()
                     .eq(discriminantor)
