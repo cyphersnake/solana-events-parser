@@ -85,21 +85,21 @@ pub struct TransactionParsedMeta {
     pub token_balances_changes: HashMap<WalletContext, AmountDiff>,
 }
 
+pub struct DecomposedInstruction<'logs, IX, ACCOUNTS> {
+    pub program_ctx: ProgramContext,
+    pub ix: IX,
+    pub accounts: ACCOUNTS,
+    pub logs: &'logs Vec<ProgramLog>,
+}
+
 #[cfg(feature = "anchor")]
 mod anchor {
     use std::io;
     use std::io::ErrorKind;
 
+    use super::{Pubkey, TransactionParsedMeta};
+    use crate::transaction_parser::DecomposedInstruction;
     use anchor_lang::{AnchorDeserialize, Discriminator, Owner};
-
-    use super::{ProgramContext, ProgramLog, Pubkey, TransactionParsedMeta};
-
-    pub struct DecomposedInstruction<'logs, IX, ACCOUNTS> {
-        pub program_ctx: ProgramContext,
-        pub ix: IX,
-        pub accounts: ACCOUNTS,
-        pub logs: &'logs Vec<ProgramLog>,
-    }
 
     impl TransactionParsedMeta {
         pub fn find_and_decompose_ix<
