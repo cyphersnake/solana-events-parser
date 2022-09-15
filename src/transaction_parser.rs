@@ -92,9 +92,10 @@ mod anchor {
 
     use anchor_lang::{AnchorDeserialize, Discriminator, Owner};
 
-    use super::{ProgramLog, Pubkey, TransactionParsedMeta};
+    use super::{ProgramContext, ProgramLog, Pubkey, TransactionParsedMeta};
 
     pub struct DecomposedInstruction<'logs, IX, ACCOUNTS> {
+        pub program_ctx: ProgramContext,
         pub ix: IX,
         pub accounts: ACCOUNTS,
         pub logs: &'logs Vec<ProgramLog>,
@@ -111,13 +112,14 @@ mod anchor {
             use crate::ParseInstruction;
             self.meta
                 .iter()
-                .filter_map(|(ctx, meta)| ctx.program_id.eq(&IX::owner()).then(|| meta))
-                .filter_map(|(raw_instruction, logs)| {
+                .filter(|(ctx, _meta)| ctx.program_id.eq(&IX::owner()))
+                .filter_map(|(program_ctx, (raw_instruction, logs))| {
                     Some(
                         raw_instruction
                             .parse_instruction::<IX>()?
                             .map(|instruction| {
                                 Ok(DecomposedInstruction {
+                                    program_ctx: *program_ctx,
                                     logs,
                                     accounts: ACCOUNTS::from(
                                         <[Pubkey; ACCOUNTS_COUNT]>::try_from(
