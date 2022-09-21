@@ -106,9 +106,20 @@ pub enum Log {
 
 impl Log {
     fn new(input: &str) -> Result<Self, Error> {
+        #[cfg(not(feature = "unknown_log"))]
         let capture = LOG
             .captures(input)
             .ok_or_else(|| Error::BadLogLine(input.to_string()))?;
+
+        #[cfg(feature = "unknown_log")]
+        let capture = match LOG.captures(input) {
+            Some(capture) => capture,
+            None => {
+                return Ok(Self::UnknownFormat {
+                    unknown_log_string: input.to_owned(),
+                })
+            }
+        };
 
         if capture.name("deployed_program").is_some() {
             Ok(Log::DeployedProgram {
@@ -228,13 +239,7 @@ impl Log {
                     .parse()?,
             })
         } else {
-            #[cfg(feature = "unknown_log")]
-            return Ok(Log::UnknownFormat {
-                unknown_log_string: input.to_owned(),
-            });
-
-            #[cfg(not(feature = "unknown_log"))]
-            return Err(Error::BadLogLine(input.to_owned()));
+            Err(Error::BadLogLine(input.to_owned()))
         }
     }
 }
@@ -428,6 +433,19 @@ pub fn parse_events(input: &[String]) -> Result<HashMap<ProgramContext, Vec<Prog
 mod log_test {
     use super::*;
     use std::{collections::BTreeMap, str::FromStr};
+
+    #[cfg(feature = "unknown_log")]
+    #[test]
+    fn unknown_log_test() {
+        assert_eq!(
+            Log::new("New authority Some(5MgAaNomDg4Y88v7gJ7LSWAyoLpDfcfbXZGQQnFddjJT)")
+                .expect("Failed to check log"),
+            Log::UnknownFormat {
+                unknown_log_string:
+                    "New authority Some(5MgAaNomDg4Y88v7gJ7LSWAyoLpDfcfbXZGQQnFddjJT)".to_owned()
+            }
+        );
+    }
 
     #[test]
     fn test_deployed_program() {
