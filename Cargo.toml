@@ -6,6 +6,7 @@ edition = "2021"
 
 [features]
 default = ["solana", "anchor"]
+unknown_log = []
 solana = ["solana-client", "solana-sdk", "solana-transaction-status"]
 anchor = ["solana", "anchor-lang", "base64"]
 

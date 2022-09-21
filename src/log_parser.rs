@@ -98,6 +98,10 @@ pub enum Log {
         consumed: usize,
         all: usize,
     },
+    #[cfg(feature = "unknown_log")]
+    UnknownFormat {
+        unknown_log_string: String,
+    },
 }
 
 impl Log {
@@ -224,7 +228,13 @@ impl Log {
                     .parse()?,
             })
         } else {
-            Err(Error::BadLogLine(input.to_owned()))
+            #[cfg(feature = "unknown_log")]
+            return Ok(Log::UnknownFormat {
+                unknown_log_string: input.to_owned(),
+            });
+
+            #[cfg(not(feature = "unknown_log"))]
+            return Err(Error::BadLogLine(input.to_owned()));
         }
     }
 }
@@ -237,7 +247,14 @@ pub enum ProgramLog {
     Log(String),
     Return(ProgramReturn),
     Invoke(ProgramContext),
-    Consumed { consumed: usize, all: usize },
+    Consumed {
+        consumed: usize,
+        all: usize,
+    },
+    #[cfg(feature = "unknown_log")]
+    UnknownFormat {
+        unknown_log_string: String,
+    },
 }
 
 #[derive(Clone, Hash, PartialEq, Eq, Debug, PartialOrd, Ord, Serialize, Deserialize)]
@@ -383,6 +400,19 @@ pub fn bind_events(
                     consumed,
                     all
                 );
+            }
+            #[cfg(feature = "unknown_log")]
+            Log::UnknownFormat { unknown_log_string } => {
+                let ctx = last_at_stack(&programs_stack, index)?;
+                log::warn!(
+                    "Unknown log \"{}\" from {} program",
+                    unknown_log_string,
+                    bs58::encode(&ctx.program_id).into_string(),
+                );
+                result
+                    .entry(ctx)
+                    .or_default()
+                    .push(ProgramLog::UnknownFormat { unknown_log_string });
             }
         };
     }
