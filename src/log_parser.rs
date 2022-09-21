@@ -42,8 +42,8 @@ pub enum Error {
     },
     #[error("Error to complete log via binding logs: error: {err} at index {index}")]
     ErrorToCompleteLog { err: String, index: usize },
-    #[error("Missplace consumed log: Invoked {expected_program:?}, consumed program id: {consumed_program_id:?} at index {index}")]
-    MissplaceConsumed {
+    #[error("Misplace consumed log: Invoked {expected_program:?}, consumed program id: {consumed_program_id:?} at index {index}")]
+    MisplaceConsumed {
         consumed_program_id: Pubkey,
         expected_program: Option<Pubkey>,
         index: usize,
@@ -383,7 +383,7 @@ pub fn bind_events(
             } => {
                 let ctx = last_at_stack(&programs_stack, index)?;
                 if program_id.ne(&ctx.program_id) {
-                    return Err(Error::MissplaceConsumed {
+                    return Err(Error::MisplaceConsumed {
                         expected_program: Some(ctx.program_id),
                         consumed_program_id: program_id,
                         index,
