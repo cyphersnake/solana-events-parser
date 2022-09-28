@@ -244,7 +244,7 @@ impl Log {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
 pub enum ProgramLog {
     DeployedProgram(Pubkey),
     UpgradedProgram(Pubkey),
@@ -431,8 +431,9 @@ pub fn parse_events(input: &[String]) -> Result<HashMap<ProgramContext, Vec<Prog
 
 #[cfg(test)]
 mod log_test {
-    use super::*;
     use std::{collections::BTreeMap, str::FromStr};
+
+    use super::*;
 
     #[cfg(feature = "unknown_log")]
     #[test]

@@ -22,6 +22,7 @@ serde_json = "1.0.81"
 anyhow = "1.0.32"
 async-trait = "0.1.53"
 tokio = "1.14.1"
+futures = "0.3"
 
 solana-client = { version = "1.10.12", optional = true }
 solana-sdk = { version = "1.10.12", optional = true }

@@ -1,5 +1,9 @@
-use std::{collections::HashMap, fmt::Debug, num::ParseIntError, str::FromStr};
+use std::{
+    collections::HashMap, fmt::Debug, io, io::ErrorKind, marker::PhantomData, num::ParseIntError,
+    pin::Pin, str::FromStr, sync::Arc,
+};
 
+use anchor_lang::AnchorDeserialize;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 pub use solana_client::nonblocking::rpc_client::RpcClient;
@@ -11,12 +15,15 @@ pub use solana_sdk::{
     signature::Signature,
     slot_history::Slot,
 };
-
 pub use solana_transaction_status::{
     EncodedConfirmedTransactionWithStatusMeta, EncodedTransactionWithStatusMeta, UiInstruction,
     UiTransactionEncoding, UiTransactionTokenBalance,
 };
 
+use crate::{
+    event_parser::{Discriminator, Owner},
+    ParseInstruction,
+};
 pub use crate::{
     instruction_parser::{BindInstructions, InstructionContext},
     log_parser::{self, ProgramContext, ProgramLog},
@@ -46,6 +53,8 @@ pub enum Error {
     ParseIntError(#[from] ParseIntError),
     #[error("Pre token account don't match with post")]
     WrongBalanceAccountConsistance(Pubkey),
+    #[error("Wrong parser found")]
+    WrongParserFound,
 }
 
 #[async_trait]
@@ -92,14 +101,160 @@ pub struct DecomposedInstruction<'logs, IX, ACCOUNTS> {
     pub logs: &'logs Vec<ProgramLog>,
 }
 
+#[async_trait]
+pub trait ConsumeInstruction {
+    async fn consume_ix(self: Box<Self>) -> Result<(), Error>;
+}
+
+pub type Consumer<IX, ACCOUNTS> = Arc<
+    dyn Fn(
+            Box<ParsedInstruction<IX, ACCOUNTS>>,
+        ) -> Pin<Box<dyn futures::Future<Output = Result<(), Error>> + Send>>
+        + Send
+        + Sync,
+>;
+
+#[derive(Clone)]
+pub struct ParsedInstruction<IX, ACCOUNTS> {
+    pub program_ctx: ProgramContext,
+    pub ix: IX,
+    pub accounts: ACCOUNTS,
+    pub logs: Vec<ProgramLog>,
+    pub consumer: Option<Consumer<IX, ACCOUNTS>>,
+}
+
+#[async_trait]
+impl<IX: Send + Sync, ACCOUNTS: Send + Sync> ConsumeInstruction
+    for ParsedInstruction<IX, ACCOUNTS>
+{
+    async fn consume_ix(self: Box<Self>) -> Result<(), Error> {
+        if let Some(consumer) = self.consumer.as_ref() {
+            (consumer.clone())(self).await?;
+        }
+        Ok(())
+    }
+}
+
+pub trait IxParser {
+    fn check_parser(&self, program_ctx: &ProgramContext, raw_ix: &Instruction) -> bool;
+
+    fn parse_ix(
+        &self,
+        program_ctx: ProgramContext,
+        raw_ix: &Instruction,
+        logs: &[ProgramLog],
+    ) -> Result<Box<dyn ConsumeInstruction + Send>, io::Error>;
+}
+
+pub struct InstructionParser<
+    IX: Discriminator + Owner + AnchorDeserialize + Send,
+    ACCOUNTS: From<[Pubkey; ACCOUNTS_COUNT]> + Send,
+    const ACCOUNTS_COUNT: usize,
+> {
+    ix: PhantomData<IX>,
+    accounts: PhantomData<ACCOUNTS>,
+    consumer: Option<Consumer<IX, ACCOUNTS>>,
+}
+
+impl<
+        IX: 'static + Discriminator + Owner + AnchorDeserialize + Send + Sync,
+        ACCOUNTS: 'static + From<[Pubkey; ACCOUNTS_COUNT]> + Send + Sync,
+        const ACCOUNTS_COUNT: usize,
+    > InstructionParser<IX, ACCOUNTS, ACCOUNTS_COUNT>
+{
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn new_boxed() -> Box<dyn IxParser + Send + Sync> {
+        Box::new(Self {
+            ix: Default::default(),
+            accounts: Default::default(),
+            consumer: None,
+        })
+    }
+
+    pub fn boxed(self) -> Box<dyn IxParser + Send + Sync> {
+        Box::new(self)
+    }
+
+    pub fn set_consumer(mut self, consumer: Consumer<IX, ACCOUNTS>) -> Self {
+        self.consumer = Some(consumer);
+
+        self
+    }
+}
+
+impl<
+        IX: 'static + Discriminator + Owner + AnchorDeserialize + Send + Sync,
+        ACCOUNTS: 'static + From<[Pubkey; ACCOUNTS_COUNT]> + Send + Sync,
+        const ACCOUNTS_COUNT: usize,
+    > Default for InstructionParser<IX, ACCOUNTS, ACCOUNTS_COUNT>
+{
+    fn default() -> Self {
+        Self {
+            ix: Default::default(),
+            accounts: Default::default(),
+            consumer: None,
+        }
+    }
+}
+
+impl<
+        IX: 'static + Discriminator + Owner + AnchorDeserialize + Send + Sync,
+        ACCOUNTS: 'static + From<[Pubkey; ACCOUNTS_COUNT]> + Send + Sync,
+        const ACCOUNTS_COUNT: usize,
+    > IxParser for InstructionParser<IX, ACCOUNTS, ACCOUNTS_COUNT>
+{
+    fn check_parser(&self, program_ctx: &ProgramContext, raw_ix: &Instruction) -> bool {
+        const DISCRIMINATOR_SIZE: usize = 8;
+        program_ctx.program_id.eq(&IX::owner())
+            && IX::owner().eq(&raw_ix.program_id)
+            && IX::discriminator().eq(raw_ix.data.split_at(DISCRIMINATOR_SIZE).0)
+    }
+
+    fn parse_ix(
+        &self,
+        program_ctx: ProgramContext,
+        raw_ix: &Instruction,
+        logs: &[ProgramLog],
+    ) -> Result<Box<dyn ConsumeInstruction + Send + 'static>, io::Error> {
+        Ok(Box::new(ParsedInstruction {
+            program_ctx,
+            logs: logs.to_vec(),
+            consumer: self.consumer.as_ref().cloned(),
+            accounts: ACCOUNTS::from(
+                <[Pubkey; ACCOUNTS_COUNT]>::try_from(
+                    raw_ix
+                        .accounts
+                        .iter()
+                        .map(|acc| acc.pubkey)
+                        .take(ACCOUNTS_COUNT)
+                        .collect::<Vec<_>>(),
+                )
+                .map_err(|err| {
+                    io::Error::new(
+                        ErrorKind::InvalidData,
+                        format!("Instruction accounts parsing error:{:?}", err),
+                    )
+                })?,
+            ),
+            //TODO: Filter none
+            ix: raw_ix
+                .parse_instruction::<IX>()
+                .ok_or_else(|| io::Error::new(ErrorKind::InvalidData, Error::WrongParserFound))??,
+        }))
+    }
+}
+
 #[cfg(feature = "anchor")]
 mod anchor {
-    use std::io;
-    use std::io::ErrorKind;
+    use std::{io, io::ErrorKind, sync::Arc};
+
+    use anchor_lang::{AnchorDeserialize, Discriminator, Owner};
 
     use super::{Pubkey, TransactionParsedMeta};
-    use crate::transaction_parser::DecomposedInstruction;
-    use anchor_lang::{AnchorDeserialize, Discriminator, Owner};
+    use crate::transaction_parser::{ConsumeInstruction, DecomposedInstruction, IxParser};
 
     impl TransactionParsedMeta {
         pub fn find_and_decompose_ix<
@@ -148,6 +303,21 @@ mod anchor {
                     )
                 })
                 .collect::<Result<_, _>>()?
+        }
+
+        pub fn find_and_decompose_ix_with_parsers(
+            &self,
+            parsers: Arc<Vec<Box<dyn IxParser + Send + Sync>>>,
+        ) -> Result<Vec<Box<(dyn ConsumeInstruction + Send)>>, io::Error> {
+            self.meta
+                .iter()
+                .filter_map(|(program_ctx, (raw_instruction, logs))| {
+                    parsers
+                        .iter()
+                        .find(|parser| parser.check_parser(program_ctx, raw_instruction))
+                        .map(|parser| parser.parse_ix(*program_ctx, raw_instruction, logs))
+                })
+                .collect::<Result<Vec<_>, _>>()
         }
     }
 }
