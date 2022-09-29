@@ -55,6 +55,8 @@ pub enum Error {
     WrongBalanceAccountConsistance(Pubkey),
     #[error("Wrong parser found")]
     WrongParserFound,
+    #[error("Failed to consume instrucition with error msg: {0}")]
+    ErrorWhileConsume(String),
 }
 
 #[async_trait]
