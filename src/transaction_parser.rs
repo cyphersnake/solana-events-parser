@@ -85,6 +85,8 @@ impl BindTransactionLogs for RpcClient {
 }
 
 pub type AmountDiff = i128;
+pub type ChildProgramContext = ProgramContext;
+pub type ParentProgramContext = ProgramContext;
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TransactionParsedMeta {
     pub meta: HashMap<ProgramContext, (Instruction, Vec<ProgramLog>)>,
@@ -92,6 +94,7 @@ pub struct TransactionParsedMeta {
     pub block_time: Option<UnixTimestamp>,
     pub lamports_changes: HashMap<Pubkey, AmountDiff>,
     pub token_balances_changes: HashMap<WalletContext, AmountDiff>,
+    pub parent_ix: HashMap<ChildProgramContext, ParentProgramContext>,
 }
 
 pub struct DecomposedInstruction<'logs, IX, ACCOUNTS> {
@@ -239,7 +242,6 @@ impl<
                     )
                 })?,
             ),
-            //TODO: Filter none
             ix: raw_ix
                 .parse_instruction::<IX>()
                 .ok_or_else(|| io::Error::new(ErrorKind::InvalidData, Error::WrongParserFound))??,
@@ -350,10 +352,8 @@ impl BindTransactionInstructionLogs for RpcClient {
             .as_ref()
             .ok_or(Error::EmptyMetaInTransaction(signature))?;
 
-        Ok(TransactionParsedMeta {
-            slot,
-            block_time,
-            meta: log_parser::parse_events(
+        let meta: HashMap<ProgramContext, (Instruction, Vec<ProgramLog>)> =
+            log_parser::parse_events(
                 meta.log_messages
                     .as_ref()
                     .ok_or(Error::EmptyLogsInTransaction(signature))?
@@ -378,7 +378,23 @@ impl BindTransactionInstructionLogs for RpcClient {
                     Err(Error::InstructionLogsConsistencyError(ix_ctx))
                 }
             })
-            .collect::<Result<_, Error>>()?,
+            .collect::<Result<_, Error>>()?;
+
+        Ok(TransactionParsedMeta {
+            slot,
+            block_time,
+            parent_ix: meta
+                .iter()
+                .flat_map(|(parent_ctx, (_, program_logs))| {
+                    program_logs
+                        .iter()
+                        .filter_map(|program_log| match program_log {
+                            ProgramLog::Invoke(children_ctx) => Some((*children_ctx, *parent_ctx)),
+                            _ => None,
+                        })
+                })
+                .collect(),
+            meta,
             lamports_changes: transaction.get_lamports_changes(&signature)?,
             token_balances_changes: transaction.get_assets_changes(&signature)?,
         })
