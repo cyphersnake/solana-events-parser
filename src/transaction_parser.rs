@@ -163,16 +163,8 @@ impl<
         const ACCOUNTS_COUNT: usize,
     > InstructionDecomposer<IX, ACCOUNTS, ACCOUNTS_COUNT>
 {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     pub fn new_boxed() -> Box<dyn DecomposeInstruction + Send + Sync> {
-        Box::new(Self {
-            ix: Default::default(),
-            accounts: Default::default(),
-            consumer: None,
-        })
+        Self::default().boxed()
     }
 
     pub fn boxed(self) -> Box<dyn DecomposeInstruction + Send + Sync> {
