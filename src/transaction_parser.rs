@@ -15,6 +15,7 @@ pub use solana_sdk::{
     signature::Signature,
     slot_history::Slot,
 };
+use solana_transaction_status::option_serializer::OptionSerializer;
 pub use solana_transaction_status::{
     EncodedConfirmedTransactionWithStatusMeta, EncodedTransactionWithStatusMeta, UiInstruction,
     UiTransactionEncoding, UiTransactionTokenBalance,
@@ -74,14 +75,20 @@ impl BindTransactionLogs for RpcClient {
         signature: Signature,
     ) -> Result<HashMap<ProgramContext, Vec<ProgramLog>>, Error> {
         Ok(log_parser::parse_events(
-            self.get_transaction(&signature, UiTransactionEncoding::Base58)
+            match self
+                .get_transaction(&signature, UiTransactionEncoding::Base58)
                 .await?
                 .transaction
                 .meta
                 .ok_or(Error::EmptyMetaInTransaction(signature))?
                 .log_messages
-                .ok_or(Error::EmptyLogsInTransaction(signature))?
-                .as_slice(),
+            {
+                OptionSerializer::Skip | OptionSerializer::None => {
+                    Err(Error::EmptyLogsInTransaction(signature))
+                }
+                OptionSerializer::Some(some) => Ok(some),
+            }?
+            .as_slice(),
         )?)
     }
 }
@@ -349,12 +356,12 @@ impl BindTransactionInstructionLogs for RpcClient {
             .ok_or(Error::EmptyMetaInTransaction(signature))?;
 
         let meta: HashMap<ProgramContext, (Instruction, Vec<ProgramLog>)> =
-            log_parser::parse_events(
-                meta.log_messages
-                    .as_ref()
-                    .ok_or(Error::EmptyLogsInTransaction(signature))?
-                    .as_slice(),
-            )?
+            log_parser::parse_events(match meta.log_messages.as_ref() {
+                OptionSerializer::None | OptionSerializer::Skip => {
+                    Err(Error::EmptyLogsInTransaction(signature))
+                }
+                OptionSerializer::Some(log_messages) => Ok(log_messages.as_slice()),
+            }?)?
             .into_iter()
             .map(|(ctx, events)| {
                 let ix_ctx = InstructionContext {
@@ -441,7 +448,11 @@ impl WalletContext {
     fn try_new(balance: &UiTransactionTokenBalance, accounts: &[Pubkey]) -> Result<Self, Error> {
         Ok(WalletContext {
             wallet_address: accounts[balance.account_index as usize],
-            wallet_owner: balance.owner.as_deref().map(Pubkey::from_str).transpose()?,
+            wallet_owner: match &balance.owner {
+                OptionSerializer::None | OptionSerializer::Skip => None,
+                OptionSerializer::Some(owner) => Some(Pubkey::from_str(owner)),
+            }
+            .transpose()?,
             token_mint: Pubkey::from_str(balance.mint.as_str())?,
         })
     }
@@ -475,9 +486,17 @@ impl GetAssetsChanges for EncodedTransactionWithStatusMeta {
             ))
         };
 
-        meta.pre_token_balances
-            .as_ref()
-            .zip(meta.post_token_balances.as_ref())
+        let pre_token_balances = match &meta.pre_token_balances {
+            OptionSerializer::Some(pre_token_balances) => Some(pre_token_balances),
+            OptionSerializer::None | OptionSerializer::Skip => None,
+        };
+        let post_token_balances = match &meta.post_token_balances {
+            OptionSerializer::Some(post_token_balances) => Some(post_token_balances),
+            OptionSerializer::None | OptionSerializer::Skip => None,
+        };
+
+        pre_token_balances
+            .zip(post_token_balances)
             .map(|(pre_token_balances, post_token_balances)| {
                 let balances_diff = post_token_balances
                     .iter()

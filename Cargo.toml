@@ -1,6 +1,6 @@
 [package]
 name = "solana-events-parser"
-version = "0.1.1"
+version = "0.1.2"
 publish = true
 edition = "2021"
 
@@ -24,8 +24,9 @@ async-trait = "0.1.53"
 tokio = "1.14.1"
 futures = "0.3"
 
-solana-client = { version = "1.10.12", optional = true }
-solana-sdk = { version = "1.10.12", optional = true }
-solana-transaction-status = { version = "1.10.12", optional = true }
-anchor-lang = { git = "https://github.com/debridge-finance/anchor.git", branch = "accounts-from-pubkey", optional = true}
+anchor-lang = { git = "https://github.com/debridge-finance/anchor.git", branch = "update-solana-version", optional = true}
+solana-client = { version = "1.14.7", optional = true }
+solana-sdk = { version = "1.14.7", optional = true }
+solana-transaction-status = { version = "1.14.7", optional = true }
+
 base64 = { version = "0.13.0", optional = true }

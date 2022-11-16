@@ -9,6 +9,7 @@ pub use solana_sdk::{
     signature::Signature,
     slot_history::Slot,
 };
+use solana_transaction_status::option_serializer::OptionSerializer;
 pub use solana_transaction_status::{
     EncodedTransactionWithStatusMeta, UiInstruction, UiTransactionEncoding,
 };
@@ -64,16 +65,21 @@ impl BindInstructions for EncodedTransactionWithStatusMeta {
             call_index
         };
 
-        let inner_instructions = self
+        let inner_instructions = match self
             .meta
             .as_ref()
             .ok_or(Error::EmptyMetaInTransaction(signature))?
             .inner_instructions
             .as_ref()
-            .ok_or(Error::EmptyInnerInstructionInTransaction(signature))?
-            .iter()
-            .map(|ui_ix| (ui_ix.index as usize, &ui_ix.instructions))
-            .collect::<HashMap<_, _>>();
+        {
+            OptionSerializer::None | OptionSerializer::Skip => {
+                Err(Error::EmptyInnerInstructionInTransaction(signature))
+            }
+            OptionSerializer::Some(inner_instructions) => Ok(inner_instructions
+                .iter()
+                .map(|ui_ix| (ui_ix.index as usize, &ui_ix.instructions))
+                .collect::<HashMap<_, _>>()),
+        }?;
 
         log::trace!(
             "Inner instructions: {:?} of {}",
