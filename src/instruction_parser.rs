@@ -1,6 +1,7 @@
-use std::{collections::HashMap, fmt::Debug};
+use std::{collections::HashMap, fmt::Debug, str::FromStr};
 
 pub use solana_client::rpc_client::RpcClient;
+use solana_sdk::pubkey::ParsePubkeyError;
 pub use solana_sdk::{
     clock::UnixTimestamp,
     instruction::{AccountMeta, Instruction},
@@ -13,6 +14,7 @@ pub use solana_transaction_status::option_serializer::OptionSerializer;
 pub use solana_transaction_status::{
     EncodedTransactionWithStatusMeta, UiInstruction, UiTransactionEncoding,
 };
+use solana_transaction_status::{UiLoadedAddresses, UiTransactionStatusMeta};
 
 pub use crate::log_parser::{self, ProgramContext, ProgramLog};
 
@@ -28,6 +30,8 @@ pub enum Error {
     ErrorWhileDecodeData(bs58::decode::Error),
     #[error("TODO")]
     ParsedInnerInstructionNotSupported,
+    #[error("TODO")]
+    PubkeyParseError(#[from] ParsePubkeyError),
 }
 
 #[derive(Clone, Copy, Hash, PartialEq, Eq, Debug)]
@@ -37,6 +41,37 @@ pub struct InstructionContext {
 }
 
 pub type OuterInstruction = Option<Pubkey>;
+
+pub trait GetLoadedAccounts {
+    fn get_loaded_accounts(&self) -> Option<Result<Vec<Pubkey>, Error>>;
+}
+impl GetLoadedAccounts for EncodedTransactionWithStatusMeta {
+    fn get_loaded_accounts(&self) -> Option<Result<Vec<Pubkey>, Error>> {
+        let msg = self.transaction.decode()?.message;
+
+        let additional_accounts = match &self.meta {
+            Some(UiTransactionStatusMeta {
+                loaded_addresses: OptionSerializer::Some(UiLoadedAddresses { writable, readonly }),
+                ..
+            }) => writable
+                .iter()
+                .map(|key| Pubkey::from_str(key))
+                .chain(readonly.iter().map(|key| Pubkey::from_str(key)))
+                .collect(),
+            _ => vec![],
+        };
+
+        Some(
+            msg.static_account_keys()
+                .iter()
+                .copied()
+                .map(Ok)
+                .chain(additional_accounts.into_iter())
+                .collect::<Result<Vec<Pubkey>, ParsePubkeyError>>()
+                .map_err(Error::from),
+        )
+    }
+}
 
 pub trait BindInstructions {
     fn bind_instructions(
@@ -49,13 +84,15 @@ impl BindInstructions for EncodedTransactionWithStatusMeta {
         &self,
         signature: Signature,
     ) -> Result<HashMap<InstructionContext, (Instruction, OuterInstruction)>, Error> {
-        let msg: VersionedMessage = self
+        let msg = self
             .transaction
             .decode()
             .ok_or(Error::ErrorWhileDecodeTransaction(signature))?
             .message;
 
-        let accounts = msg.static_account_keys();
+        let accounts = self
+            .get_loaded_accounts()
+            .ok_or(Error::ErrorWhileDecodeTransaction(signature))??;
 
         let mut call_index_map = HashMap::new();
         let mut get_and_update_call_index = move |program_id| {

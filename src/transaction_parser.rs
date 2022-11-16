@@ -24,6 +24,7 @@ pub use solana_transaction_status::{
 
 use crate::{
     event_parser::{Discriminator, Owner},
+    instruction_parser::GetLoadedAccounts,
     ParseInstruction,
 };
 pub use crate::{
@@ -430,11 +431,10 @@ impl GetLamportsChanges for EncodedTransactionWithStatusMeta {
         &self,
         signature: &Signature,
     ) -> Result<HashMap<Pubkey, AmountDiff>, Error> {
-        let msg = self
-            .transaction
-            .decode()
-            .ok_or(Error::ErrorWhileDecodeTransaction(*signature))?
-            .message;
+        let loaded_accounts = self
+            .get_loaded_accounts()
+            .ok_or(Error::ErrorWhileDecodeTransaction(*signature))??;
+
         let meta = self
             .meta
             .as_ref()
@@ -448,7 +448,7 @@ impl GetLamportsChanges for EncodedTransactionWithStatusMeta {
             .map(|(index, (old_balance, new_balance))| {
                 (index, *new_balance as i128 - *old_balance as i128)
             })
-            .map(|(index, diff)| (msg.static_account_keys()[index], diff))
+            .map(|(index, diff)| (loaded_accounts[index], diff))
             .collect())
     }
 }
@@ -484,11 +484,10 @@ impl GetAssetsChanges for EncodedTransactionWithStatusMeta {
         &self,
         signature: &Signature,
     ) -> Result<HashMap<WalletContext, AmountDiff>, Error> {
-        let msg = self
-            .transaction
-            .decode()
-            .ok_or(Error::ErrorWhileDecodeTransaction(*signature))?
-            .message;
+        let loaded_accounts = self
+            .get_loaded_accounts()
+            .ok_or(Error::ErrorWhileDecodeTransaction(*signature))??;
+
         let meta = self
             .meta
             .as_ref()
@@ -496,7 +495,7 @@ impl GetAssetsChanges for EncodedTransactionWithStatusMeta {
 
         let try_parse_balance = |balance: &UiTransactionTokenBalance| {
             Ok((
-                WalletContext::try_new(balance, msg.static_account_keys())?,
+                WalletContext::try_new(balance, &loaded_accounts)?,
                 balance.ui_token_amount.amount.parse()?,
             ))
         };
