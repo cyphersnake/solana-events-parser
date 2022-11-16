@@ -346,7 +346,7 @@ impl BindTransactionInstructionLogs for RpcClient {
             slot,
             block_time,
         } = self
-            .get_transaction(&signature, UiTransactionEncoding::Binary)
+            .get_transaction(&signature, UiTransactionEncoding::Base58)
             .await?;
         let mut instructions = transaction.bind_instructions(signature)?;
 
