@@ -7,7 +7,7 @@ use anchor_lang::AnchorDeserialize;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 pub use solana_client::nonblocking::rpc_client::RpcClient;
-use solana_sdk::pubkey::ParsePubkeyError;
+use solana_client::rpc_config::RpcTransactionConfig;
 pub use solana_sdk::{
     clock::UnixTimestamp,
     instruction::{AccountMeta, Instruction},
@@ -15,6 +15,7 @@ pub use solana_sdk::{
     signature::Signature,
     slot_history::Slot,
 };
+use solana_sdk::{commitment_config::CommitmentConfig, pubkey::ParsePubkeyError};
 use solana_transaction_status::option_serializer::OptionSerializer;
 pub use solana_transaction_status::{
     EncodedConfirmedTransactionWithStatusMeta, EncodedTransactionWithStatusMeta, UiInstruction,
@@ -76,7 +77,14 @@ impl BindTransactionLogs for RpcClient {
     ) -> Result<HashMap<ProgramContext, Vec<ProgramLog>>, Error> {
         Ok(log_parser::parse_events(
             match self
-                .get_transaction(&signature, UiTransactionEncoding::Base58)
+                .get_transaction_with_config(
+                    &signature,
+                    RpcTransactionConfig {
+                        encoding: Some(UiTransactionEncoding::Base58),
+                        max_supported_transaction_version: Some(0),
+                        commitment: Some(CommitmentConfig::finalized()),
+                    },
+                )
                 .await?
                 .transaction
                 .meta
@@ -346,7 +354,14 @@ impl BindTransactionInstructionLogs for RpcClient {
             slot,
             block_time,
         } = self
-            .get_transaction(&signature, UiTransactionEncoding::Base58)
+            .get_transaction_with_config(
+                &signature,
+                RpcTransactionConfig {
+                    encoding: Some(UiTransactionEncoding::Base58),
+                    max_supported_transaction_version: Some(0),
+                    commitment: Some(CommitmentConfig::finalized()),
+                },
+            )
             .await?;
         let mut instructions = transaction.bind_instructions(signature)?;
 
