@@ -9,7 +9,7 @@ pub use solana_sdk::{
     signature::Signature,
     slot_history::Slot,
 };
-use solana_transaction_status::option_serializer::OptionSerializer;
+pub use solana_transaction_status::option_serializer::OptionSerializer;
 pub use solana_transaction_status::{
     EncodedTransactionWithStatusMeta, UiInstruction, UiTransactionEncoding,
 };
