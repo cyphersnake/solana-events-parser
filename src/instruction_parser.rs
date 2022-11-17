@@ -24,13 +24,13 @@ pub enum Error {
     EmptyMetaInTransaction(Signature),
     #[error("Field `meta.inner_instructions` is empty")]
     EmptyInnerInstructionInTransaction(Signature),
-    #[error("TODO")]
+    #[error("Error while decode transaction {0}")]
     ErrorWhileDecodeTransaction(Signature),
-    #[error("TODO")]
+    #[error("Error while decode data {0:?}")]
     ErrorWhileDecodeData(bs58::decode::Error),
-    #[error("TODO")]
+    #[error("Parsed inner instruction not supported")]
     ParsedInnerInstructionNotSupported,
-    #[error("TODO")]
+    #[error("Pubkey parse error {0:?}")]
     PubkeyParseError(#[from] ParsePubkeyError),
 }
 
