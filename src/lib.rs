@@ -11,3 +11,6 @@ pub mod log_parser;
 pub use crate::transaction_parser::{BindTransactionInstructionLogs, BindTransactionLogs};
 #[cfg(feature = "anchor")]
 pub use crate::{event_parser::ParseEvent, instruction_parser::ParseInstruction};
+
+#[cfg(feature = "storage")]
+pub mod storage;
