@@ -309,7 +309,7 @@ pub fn bind_events(
                     .push(ProgramLog::UpgradedProgram(program_id));
             }
             Log::Truncated => {
-                log::debug!("\"Log truncated\" found at index {}", index);
+                tracing::debug!("\"Log truncated\" found at index {}", index);
                 break;
             }
             Log::ProgramInvoke { program_id, level } => {
@@ -398,7 +398,7 @@ pub fn bind_events(
                     .entry(last_at_stack(&programs_stack, index)?)
                     .or_default()
                     .push(ProgramLog::Consumed { consumed, all });
-                log::info!(
+                tracing::info!(
                     "Program {:?} at level {}, consumed {}, all: {}",
                     bs58::encode(&ctx.program_id).into_string(),
                     ctx.invoke_level,
@@ -409,7 +409,7 @@ pub fn bind_events(
             #[cfg(feature = "unknown_log")]
             Log::UnknownFormat { unknown_log_string } => {
                 let ctx = last_at_stack(&programs_stack, index)?;
-                log::warn!(
+                tracing::warn!(
                     "Unknown log \"{}\" from {} program",
                     unknown_log_string,
                     bs58::encode(&ctx.program_id).into_string(),

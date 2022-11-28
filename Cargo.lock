@@ -1939,6 +1939,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "non-empty-vec"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ceeba69aa8d4c53cdceeac8f17eb2656bb88b468bbe6c0889d34edfdea26ec8b"
+
+[[package]]
 name = "num"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3094,7 +3100,7 @@ dependencies = [
  "bs58 0.4.0",
  "futures",
  "lazy_static",
- "log",
+ "non-empty-vec",
  "regex",
  "rocksdb",
  "serde",
@@ -3105,6 +3111,7 @@ dependencies = [
  "solana-transaction-status",
  "thiserror",
  "tokio",
+ "tracing",
 ]
 
 [[package]]

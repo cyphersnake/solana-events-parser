@@ -14,3 +14,6 @@ pub use crate::{event_parser::ParseEvent, instruction_parser::ParseInstruction};
 
 #[cfg(feature = "storage")]
 pub mod storage;
+
+#[cfg(feature = "event-reader")]
+pub mod event_reader_service;

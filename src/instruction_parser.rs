@@ -118,7 +118,7 @@ impl BindInstructions for EncodedTransactionWithStatusMeta {
                 .collect::<HashMap<_, _>>()),
         }?;
 
-        log::trace!(
+        tracing::trace!(
             "Inner instructions: {:?} of {}",
             inner_instructions,
             signature
@@ -126,7 +126,7 @@ impl BindInstructions for EncodedTransactionWithStatusMeta {
 
         let mut result = HashMap::new();
         for (ix_index, compiled_ix) in msg.instructions().iter().enumerate() {
-            log::trace!("Start handling instruction with index: {}", ix_index);
+            tracing::trace!("Start handling instruction with index: {}", ix_index);
 
             let program_id = accounts[compiled_ix.program_id_index as usize];
 
@@ -134,7 +134,7 @@ impl BindInstructions for EncodedTransactionWithStatusMeta {
                 program_id,
                 call_index: get_and_update_call_index(program_id),
             };
-            log::trace!("InstructionContext of {} ix is {:?}", ix_index, ctx);
+            tracing::trace!("InstructionContext of {} ix is {:?}", ix_index, ctx);
             result.insert(
                 ctx,
                 (
@@ -156,7 +156,7 @@ impl BindInstructions for EncodedTransactionWithStatusMeta {
                 ),
             );
             if let Some(invokes) = inner_instructions.get(&ix_index) {
-                log::trace!(
+                tracing::trace!(
                     "Found inner instruction {} for {} transaction instruction",
                     invokes.len(),
                     ix_index
@@ -187,7 +187,7 @@ impl BindInstructions for EncodedTransactionWithStatusMeta {
                         program_id: invoke_ix.program_id,
                         call_index: get_and_update_call_index(invoke_ix.program_id),
                     };
-                    log::trace!(
+                    tracing::trace!(
                         "Invoke {} of ix {} with ctx {:?}",
                         invoke_index,
                         ix_index,
