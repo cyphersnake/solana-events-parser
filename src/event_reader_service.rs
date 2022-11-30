@@ -61,6 +61,8 @@ pub enum Error {
     WebsocketError(String),
     #[error(transparent)]
     ClientError(#[from] solana_client::client_error::ClientError),
+    #[error("Error while use storage: {0}")]
+    StorageError(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -78,7 +80,7 @@ pub enum EventConsumeResult {
 pub type Event = Vec<String>;
 pub type EventConsumerFn = fn(Event) -> Result<EventConsumeResult>;
 
-pub struct EventsReader<TransactionConsumerFn, EventRecipient>
+pub struct EventsReader<TransactionConsumerFn, EventRecipient, E>
 where
     EventRecipient: PassEvent + Send + Sync + 'static,
     TransactionConsumerFn: Send
@@ -89,6 +91,8 @@ where
             Arc<RpcClient>,
             Arc<EventRecipient>,
         ) -> BoxFuture<'static, Result<()>>,
+    E: 'static + Send + Sync,
+    Error: From<E>,
 {
     pub program_id: Pubkey,
     pub cluster: ClusterType,
@@ -99,12 +103,12 @@ where
     pub resync_duration: Duration,
     pub event_consumer: EventConsumerFn,
     pub transaction_consumer: TransactionConsumerFn,
-    pub local_storage:
-        Arc<dyn Send + Sync + storage::ResyncedTransactionsPtrStorage<Error = Error>>,
+    pub local_storage: Arc<dyn Send + Sync + storage::ResyncedTransactionsPtrStorage<Error = E>>,
     pub resync_signatures_chunk_size: Option<usize>,
 }
 
-impl<TransactionConsumerFn, EventRecipient> EventsReader<TransactionConsumerFn, EventRecipient>
+impl<TransactionConsumerFn, EventRecipient, E>
+    EventsReader<TransactionConsumerFn, EventRecipient, E>
 where
     EventRecipient: PassEvent + Send + Sync + 'static,
     TransactionConsumerFn: 'static
@@ -116,6 +120,8 @@ where
             Arc<RpcClient>,
             Arc<EventRecipient>,
         ) -> BoxFuture<'static, Result<()>>,
+    E: 'static + Send + Sync,
+    Error: From<E>,
 {
     pub async fn run(self: Arc<Self>) -> Result<()> {
         let listen_events = {
@@ -235,8 +241,9 @@ where
             )
             .await?;
 
-        self.local_storage
-            .filter_unregistered_transactions(&self.program_id, &all_signatures)
+        Ok(self
+            .local_storage
+            .filter_unregistered_transactions(&self.program_id, &all_signatures)?)
     }
 
     async fn resync_events(self: &Arc<Self>) -> Result<()> {
@@ -349,7 +356,7 @@ where
                         "Error while get signature for address with config: {:?}",
                         err
                     );
-                    Error::from(err)
+                    Error::ClientError(err)
                 })?
                 .into_iter()
                 .filter(|tx| tx.err.is_none())

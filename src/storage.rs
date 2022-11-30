@@ -43,8 +43,6 @@ pub trait ResyncedTransactionsPtrStorage: RegisterTransaction {
 
 #[cfg(feature = "rocksdb")]
 pub mod rocksdb {
-    use std::ops::Deref;
-
     use super::{Pubkey, RegisterTransaction, ResyncedTransactionsPtrStorage, SolanaSignature};
     use rocksdb::{DBWithThreadMode, MultiThreaded};
 
@@ -63,31 +61,28 @@ pub mod rocksdb {
             Error::Bincode(err)
         }
     }
-
-    pub type DB = DBWithThreadMode<MultiThreaded>;
-
-    pub struct LocalStorage(DB);
-    impl Deref for LocalStorage {
-        type Target = DB;
-        fn deref(&self) -> &Self::Target {
-            &self.0
+    #[cfg(feature = "event-reader")]
+    impl From<Error> for crate::event_reader_service::Error {
+        fn from(error: Error) -> Self {
+            Self::StorageError(format!("{:?}", error))
         }
     }
 
+    pub type DB = DBWithThreadMode<MultiThreaded>;
+
     fn construct_key(program_id: &Pubkey, transaction_hash: &SolanaSignature) -> Vec<u8> {
         [
-            LocalStorage::KEY_SUFFIX,
+            KEY_SUFFIX,
             program_id.to_bytes().as_ref(),
             transaction_hash.as_ref(),
         ]
         .concat()
     }
 
-    impl LocalStorage {
-        const LAST_RESYNCED_SUFFIX: &'static [u8] = b"_last_resynced";
-        const KEY_SUFFIX: &[u8] = b"tx";
-    }
-    impl RegisterTransaction for LocalStorage {
+    const LAST_RESYNCED_SUFFIX: &[u8] = b"_last_resynced";
+    const KEY_SUFFIX: &[u8] = b"tx";
+
+    impl RegisterTransaction for DB {
         type Error = Error;
 
         fn register_transaction(
@@ -130,7 +125,7 @@ pub mod rocksdb {
         }
     }
 
-    impl ResyncedTransactionsPtrStorage for LocalStorage {
+    impl ResyncedTransactionsPtrStorage for DB {
         fn initialize_if_needed_resynced_transaction(
             &self,
             program_id: &Pubkey,
@@ -147,13 +142,7 @@ pub mod rocksdb {
             program_id: &Pubkey,
         ) -> Result<Option<SolanaSignature>, Self::Error> {
             Ok(self
-                .get(
-                    [
-                        &program_id.to_bytes()[..],
-                        LocalStorage::LAST_RESYNCED_SUFFIX,
-                    ]
-                    .concat(),
-                )?
+                .get([&program_id.to_bytes()[..], LAST_RESYNCED_SUFFIX].concat())?
                 .map(|raw| bincode::deserialize(&raw))
                 .transpose()?)
         }
@@ -164,11 +153,7 @@ pub mod rocksdb {
             transaction: &SolanaSignature,
         ) -> Result<(), Self::Error> {
             self.put(
-                [
-                    &program_id.to_bytes()[..],
-                    LocalStorage::LAST_RESYNCED_SUFFIX,
-                ]
-                .concat(),
+                [&program_id.to_bytes()[..], LAST_RESYNCED_SUFFIX].concat(),
                 bincode::serialize(&transaction)?,
             )?;
 
