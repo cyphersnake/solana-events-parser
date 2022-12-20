@@ -90,7 +90,7 @@ pub mod rocksdb {
             program_id: &Pubkey,
             transaction_hash: &SolanaSignature,
         ) -> Result<(), Self::Error> {
-            self.put(&construct_key(program_id, transaction_hash), [])?;
+            self.put(construct_key(program_id, transaction_hash), [])?;
             Ok(())
         }
 
@@ -100,7 +100,7 @@ pub mod rocksdb {
             transaction_hash: &SolanaSignature,
         ) -> Result<bool, Self::Error> {
             Ok(self
-                .get(&construct_key(program_id, transaction_hash))?
+                .get(construct_key(program_id, transaction_hash))?
                 .is_some())
         }
 
