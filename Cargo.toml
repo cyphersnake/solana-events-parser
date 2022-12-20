@@ -1,6 +1,6 @@
 [package]
 name = "solana-events-parser"
-version = "0.1.4"
+version = "0.2.0"
 publish = true
 edition = "2021"
 

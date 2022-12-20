@@ -5,7 +5,7 @@ use futures::{
     future::{self, BoxFuture},
     StreamExt,
 };
-use non_empty_vec::NonEmpty as NonEmptyVec;
+use non_empty_vec::{EmptyError, NonEmpty as NonEmptyVec};
 use solana_client::{
     nonblocking::{pubsub_client::PubsubClient, rpc_client::RpcClient},
     rpc_config::{RpcTransactionLogsConfig, RpcTransactionLogsFilter},
@@ -105,6 +105,7 @@ where
     pub transaction_consumer: TransactionConsumerFn,
     pub local_storage: Arc<dyn Send + Sync + storage::ResyncedTransactionsPtrStorage<Error = E>>,
     pub resync_signatures_chunk_size: Option<usize>,
+    pub resync_ptr_setter: Arc<dyn Send + Sync + Fn(u64) -> BoxFuture<'static, Result<()>>>,
 }
 
 impl<TransactionConsumerFn, EventRecipient, E>
@@ -231,8 +232,13 @@ where
         }
     }
 
-    async fn get_unregistered_program_transactions(&self) -> Result<Vec<SolanaSignature>> {
-        let all_signatures = self
+    async fn get_unregistered_program_transactions(
+        &self,
+    ) -> Result<(
+        u64,
+        result::Result<NonEmptyVec<SolanaSignature>, EmptyError>,
+    )> {
+        let (resync_last_slot, all_signatures) = self
             .get_signatures_for_address_with_config(
                 &self.program_id,
                 self.commitment_config,
@@ -241,9 +247,13 @@ where
             )
             .await?;
 
-        Ok(self
-            .local_storage
-            .filter_unregistered_transactions(&self.program_id, &all_signatures)?)
+        Ok((
+            resync_last_slot,
+            NonEmptyVec::try_from(
+                self.local_storage
+                    .filter_unregistered_transactions(&self.program_id, &all_signatures)?,
+            ),
+        ))
     }
 
     async fn resync_events(self: &Arc<Self>) -> Result<()> {
@@ -251,10 +261,11 @@ where
             tokio::time::sleep(self.resync_duration).await;
             tracing::info!("Start resync: {}", self.program_id);
 
-            let signatures = unwrap_or_continue!(NonEmptyVec::try_from(unwrap_or_continue!(
+            let (resync_last_slot, signatures) = unwrap_or_continue!(
                 self.get_unregistered_program_transactions().await,
                 "Error while get unregistered program signature: {err:?}"
-            )));
+            );
+            let signatures = unwrap_or_continue!(signatures);
 
             // If any of tx in resync batch failed, then not move last resync transaction pointer
             let mut last_transaction = Some(signatures.first());
@@ -310,6 +321,7 @@ where
                 self.local_storage
                     .set_last_resynced_transaction(&self.program_id, last_transaction)?;
             }
+            (self.resync_ptr_setter)(resync_last_slot).await?;
         }
     }
 
@@ -328,9 +340,19 @@ where
         address: &Pubkey,
         commitment_config: CommitmentConfig,
         until: Option<SolanaSignature>,
-    ) -> Result<Vec<SolanaSignature>> {
+    ) -> Result<(u64, Vec<SolanaSignature>)> {
         let mut all_signatures = vec![];
         let mut before = None;
+
+        // TODO Change to batch request
+        let resync_last_slot = self
+            .client
+            .get_slot_with_commitment(commitment_config)
+            .await
+            .map_err(|err| {
+                tracing::error!("Error while get resync last slot: {:?}", err);
+                Error::ClientError(err)
+            })?;
 
         loop {
             tracing::trace!(
@@ -379,6 +401,6 @@ where
         }
         all_signatures.reverse();
 
-        Ok(all_signatures)
+        Ok((resync_last_slot, all_signatures))
     }
 }
