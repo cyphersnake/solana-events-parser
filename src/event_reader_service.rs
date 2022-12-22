@@ -80,6 +80,12 @@ pub enum EventConsumeResult {
 pub type Event = Vec<String>;
 pub type EventConsumerFn = fn(Event) -> Result<EventConsumeResult>;
 
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ResyncOrder {
+    Newest,
+    Historical,
+}
+
 pub struct EventsReader<TransactionConsumerFn, EventRecipient, E>
 where
     EventRecipient: PassEvent + Send + Sync + 'static,
@@ -106,6 +112,7 @@ where
     pub local_storage: Arc<dyn Send + Sync + storage::ResyncedTransactionsPtrStorage<Error = E>>,
     pub resync_signatures_chunk_size: Option<usize>,
     pub resync_ptr_setter: Arc<dyn Send + Sync + Fn(u64) -> BoxFuture<'static, Result<()>>>,
+    pub resync_order: ResyncOrder,
 }
 
 impl<TransactionConsumerFn, EventRecipient, E>
@@ -281,7 +288,7 @@ where
                 let signatures_chunk = signatures_chunk.to_vec();
 
                 tasks.push(async move {
-                    for tx_signature in signatures_chunk {
+                    for tx_signature in signatures_chunk.into_iter().rev() {
                         tracing::info!(
                             "Unprocessed transaction find while resynchronization process, transaction hash: {}",
                             tx_signature.to_string()
@@ -315,6 +322,9 @@ where
                 });
             }
 
+            if self.resync_order == ResyncOrder::Historical {
+                tasks.reverse();
+            }
             future::join_all(tasks).await;
 
             if let Some(last_transaction) = last_transaction {
