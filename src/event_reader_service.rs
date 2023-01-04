@@ -1,10 +1,7 @@
 use std::{result, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
-use futures::{
-    future::{self, BoxFuture},
-    StreamExt,
-};
+use futures::{future::BoxFuture, StreamExt};
 use non_empty_vec::{EmptyError, NonEmpty as NonEmptyVec};
 use result_inspect::ResultInspectErr;
 use solana_client::{
@@ -269,7 +266,7 @@ where
     }
 
     async fn resync_events(self: &Arc<Self>) -> Result<()> {
-        loop {
+        'resync: loop {
             tokio::time::sleep(self.resync_duration).await;
             tracing::info!("Start resync: {}", self.program_id);
 
@@ -283,20 +280,21 @@ where
             let mut last_transaction = match self.resync_order {
                 ResyncOrder::Newest => Some(signatures.first()),
                 ResyncOrder::Historical => Some(signatures.last()),
-            };
+            }
+            .copied();
 
             let signatures_chunks = signatures.as_slice().chunks(
                 self.resync_signatures_chunk_size
                     .unwrap_or_else(|| signatures.len().get()),
             );
 
-            let mut tasks = Vec::with_capacity(signatures_chunks.len());
+            let mut tasks = tokio::task::JoinSet::new();
             for signatures_chunk in signatures_chunks {
                 let self_clone = self.clone();
                 let signatures_chunk = signatures_chunk.to_vec();
 
-                tasks.push(async move {
-                    for tx_signature in signatures_chunk.into_iter().rev() {
+                tasks.spawn(async move {
+                    for tx_signature in signatures_chunk.into_iter() {
                         tracing::info!(
                             "Unprocessed transaction find while resynchronization process, transaction hash: {}",
                             tx_signature.to_string()
@@ -308,11 +306,11 @@ where
                             "Error while get transaction by signature: {err:?}"
                         );
 
-                        if let Err(err) = (self.transaction_consumer)(
+                        if let Err(err) = (self_clone.transaction_consumer)(
                             tx_signature,
                             transaction,
-                            Arc::clone(&self.client),
-                            Arc::clone(&self.event_recipient),
+                            Arc::clone(&self_clone.client),
+                            Arc::clone(&self_clone.event_recipient),
                         )
                         .await
                         {
@@ -330,11 +328,27 @@ where
                 });
             }
 
-            future::join_all(tasks).await;
+            let mut tasks_success = true;
+            while let Some(task) = tasks.join_next().await {
+                tasks_success &= match task {
+                    Ok(Ok(())) => true,
+                    Ok(Err(err)) => {
+                        tracing::error!("Error while resync task: {err:?}");
+                        false
+                    }
+                    Err(err) => {
+                        tracing::error!("Error while join resync task: {err:?}");
+                        false
+                    }
+                };
+            }
+            if !tasks_success {
+                continue 'resync;
+            }
 
             if let Some(last_transaction) = last_transaction {
                 self.local_storage
-                    .set_last_resynced_transaction(&self.program_id, last_transaction)?;
+                    .set_last_resynced_transaction(&self.program_id, &last_transaction)?;
             }
             (self.resync_ptr_setter)(resync_last_slot).await?;
         }
