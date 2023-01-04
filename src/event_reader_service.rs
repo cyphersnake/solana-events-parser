@@ -160,15 +160,15 @@ where
                     .await
             })
         };
-        resync_events.await??;
         listen_events.await??;
+        resync_events.await??;
         Ok(())
     }
 
     async fn listen_events(&self) -> Result<()> {
         tracing::info!("Launching pubsub client");
 
-        let pubsub_client = PubsubClient::new("TODO")
+        let pubsub_client = PubsubClient::new(self.client.url().as_str())
             .await
             .map_err(|err| Error::WebsocketError(err.to_string()))?;
 
