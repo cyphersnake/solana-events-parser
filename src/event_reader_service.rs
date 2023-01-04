@@ -6,6 +6,7 @@ use futures::{
     StreamExt,
 };
 use non_empty_vec::{EmptyError, NonEmpty as NonEmptyVec};
+use result_inspect::ResultInspectErr;
 use solana_client::{
     nonblocking::{pubsub_client::PubsubClient, rpc_client::RpcClient},
     rpc_config::{RpcTransactionLogsConfig, RpcTransactionLogsFilter},
@@ -160,8 +161,12 @@ where
                     .await
             })
         };
-        listen_events.await??;
-        resync_events.await??;
+        listen_events
+            .await?
+            .inspect_err(|err| tracing::error!("Error while listen events: {err:?}"))?;
+        resync_events
+            .await?
+            .inspect_err(|err| tracing::error!("Error while resync events: {err:?}"))?;
         Ok(())
     }
 

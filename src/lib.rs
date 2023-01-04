@@ -1,3 +1,5 @@
+#![allow(unstable_name_collisions)]
+
 #[cfg(feature = "anchor")]
 pub mod event_parser;
 #[cfg(feature = "solana")]
