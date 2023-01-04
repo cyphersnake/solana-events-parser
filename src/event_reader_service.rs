@@ -245,7 +245,7 @@ where
         u64,
         result::Result<NonEmptyVec<SolanaSignature>, EmptyError>,
     )> {
-        let (resync_last_slot, all_signatures) = self
+        let (resync_last_slot, mut all_signatures) = self
             .get_signatures_for_address_with_config(
                 &self.program_id,
                 self.commitment_config,
@@ -253,6 +253,10 @@ where
                     .get_last_resynced_transaction(&self.program_id)?,
             )
             .await?;
+
+        if self.resync_order == ResyncOrder::Historical {
+            all_signatures.reverse();
+        }
 
         Ok((
             resync_last_slot,
@@ -275,7 +279,10 @@ where
             let signatures = unwrap_or_continue!(signatures);
 
             // If any of tx in resync batch failed, then not move last resync transaction pointer
-            let mut last_transaction = Some(signatures.first());
+            let mut last_transaction = match self.resync_order {
+                ResyncOrder::Newest => Some(signatures.first()),
+                ResyncOrder::Historical => Some(signatures.last()),
+            };
 
             let signatures_chunks = signatures.as_slice().chunks(
                 self.resync_signatures_chunk_size
@@ -322,9 +329,6 @@ where
                 });
             }
 
-            if self.resync_order == ResyncOrder::Historical {
-                tasks.reverse();
-            }
             future::join_all(tasks).await;
 
             if let Some(last_transaction) = last_transaction {
