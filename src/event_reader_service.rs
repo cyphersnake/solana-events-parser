@@ -11,7 +11,7 @@ use solana_client::{
     nonblocking::{pubsub_client::PubsubClient, rpc_client::RpcClient},
     rpc_config::{RpcTransactionLogsConfig, RpcTransactionLogsFilter},
 };
-use solana_sdk::{commitment_config::CommitmentConfig, genesis_config::ClusterType};
+use solana_sdk::commitment_config::CommitmentConfig;
 use tracing::Instrument;
 
 pub use crate::transaction_parser::{Pubkey, Signature as SolanaSignature};
@@ -102,10 +102,9 @@ where
     Error: From<E>,
 {
     pub program_id: Pubkey,
-    pub cluster: ClusterType,
     pub commitment_config: CommitmentConfig,
-
     pub client: Arc<RpcClient>,
+    pub pubsub_client: Arc<PubsubClient>,
     pub event_recipient: Arc<EventRecipient>,
     pub resync_duration: Duration,
     pub event_consumer: EventConsumerFn,
@@ -173,11 +172,8 @@ where
     async fn listen_events(&self) -> Result<()> {
         tracing::info!("Launching pubsub client");
 
-        let pubsub_client = PubsubClient::new(self.client.url().as_str())
-            .await
-            .map_err(|err| Error::WebsocketError(err.to_string()))?;
-
-        let (mut stream, _) = pubsub_client
+        let (mut stream, _) = self
+            .pubsub_client
             .logs_subscribe(
                 RpcTransactionLogsFilter::Mentions(vec![self.program_id.to_string()]),
                 RpcTransactionLogsConfig {
