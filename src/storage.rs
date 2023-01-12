@@ -43,8 +43,9 @@ pub trait ResyncedTransactionsPtrStorage: RegisterTransaction {
 
 #[cfg(feature = "rocksdb")]
 pub mod rocksdb {
-    use super::{Pubkey, RegisterTransaction, ResyncedTransactionsPtrStorage, SolanaSignature};
     use rocksdb::{DBWithThreadMode, MultiThreaded};
+
+    use super::{Pubkey, RegisterTransaction, ResyncedTransactionsPtrStorage, SolanaSignature};
 
     #[derive(Debug)]
     pub enum Error {
