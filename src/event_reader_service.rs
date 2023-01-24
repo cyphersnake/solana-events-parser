@@ -13,8 +13,8 @@ use tracing::Instrument;
 
 pub use crate::transaction_parser::{Pubkey, Signature as SolanaSignature};
 use crate::{
-    storage, transaction_parser::BindTransactionInstructionLogs,
-    transaction_parser::TransactionParsedMeta,
+    storage,
+    transaction_parser::{BindTransactionInstructionLogs, TransactionParsedMeta},
 };
 
 macro_rules! unwrap_or_continue {
@@ -283,13 +283,16 @@ where
             }
             .copied();
 
-            let signatures_chunks = signatures.as_slice().chunks(
-                self.resync_signatures_chunk_size
-                    .unwrap_or_else(|| signatures.len().get()),
-            );
+            let signatures_chunks = signatures
+                .as_slice()
+                .chunks(
+                    self.resync_signatures_chunk_size
+                        .unwrap_or_else(|| signatures.len().get()),
+                )
+                .enumerate();
 
             let mut tasks = tokio::task::JoinSet::new();
-            for signatures_chunk in signatures_chunks {
+            for (index, signatures_chunk) in signatures_chunks {
                 let self_clone = self.clone();
                 let signatures_chunk = signatures_chunk.to_vec();
 
@@ -325,7 +328,13 @@ where
                         }
 
                     Result::Ok(())
-                });
+                }
+                    .instrument(tracing::span!(
+                        tracing::Level::TRACE,
+                        "Register chunk",
+                        chunk_index = index,
+                    ))
+                );
             }
 
             let mut tasks_success = true;

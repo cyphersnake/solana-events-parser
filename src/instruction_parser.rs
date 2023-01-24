@@ -10,9 +10,9 @@ pub use solana_sdk::{
     signature::Signature,
     slot_history::Slot,
 };
-pub use solana_transaction_status::option_serializer::OptionSerializer;
 pub use solana_transaction_status::{
-    EncodedTransactionWithStatusMeta, UiInstruction, UiTransactionEncoding,
+    option_serializer::OptionSerializer, EncodedTransactionWithStatusMeta, UiInstruction,
+    UiTransactionEncoding,
 };
 use solana_transaction_status::{UiLoadedAddresses, UiTransactionStatusMeta};
 
