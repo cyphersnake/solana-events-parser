@@ -274,7 +274,13 @@ where
                 self.get_unregistered_program_transactions().await,
                 "Error while get unregistered program signature: {err:?}"
             );
-            let signatures = unwrap_or_continue!(signatures);
+            let signatures = match signatures {
+                Ok(non_empty_signatures) => non_empty_signatures,
+                Err(EmptyError) => {
+                    (self.resync_ptr_setter)(resync_last_slot).await?;
+                    continue 'resync;
+                }
+            };
 
             // If any of tx in resync batch failed, then not move last resync transaction pointer
             let mut last_transaction = match self.resync_order {
