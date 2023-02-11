@@ -65,7 +65,7 @@ pub mod rocksdb {
     #[cfg(feature = "event-reader")]
     impl From<Error> for crate::event_reader_service::Error {
         fn from(error: Error) -> Self {
-            Self::StorageError(format!("{:?}", error))
+            Self::StorageError(format!("{error:?}"))
         }
     }
 

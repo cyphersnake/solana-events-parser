@@ -245,7 +245,7 @@ impl<
                     .map_err(|err| {
                         io::Error::new(
                             ErrorKind::InvalidData,
-                            format!("Instruction accounts parsing error:{:?}", err),
+                            format!("Instruction accounts parsing error: {err:?}"),
                         )
                     })?,
                 ),
@@ -302,8 +302,7 @@ mod anchor {
                                                 io::Error::new(
                                                     ErrorKind::InvalidData,
                                                     format!(
-                                                        "Instruction accounts parsing error:{:?}",
-                                                        err
+                                                        "Instruction accounts parsing error: {err:?}",
                                                     ),
                                                 )
                                             },

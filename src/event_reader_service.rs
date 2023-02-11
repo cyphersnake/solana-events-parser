@@ -169,7 +169,7 @@ where
     async fn listen_events(&self) -> Result<()> {
         tracing::info!("Launching pubsub client");
 
-        let (mut stream, _) = self
+        let (stream, _unsubscribe) = self
             .pubsub_client
             .logs_subscribe(
                 RpcTransactionLogsFilter::Mentions(vec![self.program_id.to_string()]),
@@ -177,17 +177,20 @@ where
                     commitment: Some(self.commitment_config),
                 },
             )
+            .instrument(tracing::span!(tracing::Level::TRACE, "LogsSubscribe"))
             .await
+            .inspect_err(|err| tracing::error!("Error while subs: {err:?}"))
             .map_err(|err| Error::WebsocketError(err.to_string()))?;
 
+        let mut stream = stream.inspect(|subscription_response| {
+            tracing::info!(
+                "Log subscription response received, transaction hash: {}",
+                subscription_response.value.signature
+            );
+        });
         tracing::info!("Ready to listen");
         loop {
             if let Some(subscription_response) = stream.next().await {
-                tracing::info!(
-                    "Log subscription response received, transaction hash: {}",
-                    subscription_response.value.signature
-                );
-
                 let tx_signature = unwrap_or_continue!(
                     subscription_response
                         .value
