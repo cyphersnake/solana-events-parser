@@ -245,6 +245,7 @@ where
     ) -> Result<(
         u64,
         result::Result<NonEmptyVec<SolanaSignature>, EmptyError>,
+        Option<SolanaSignature>,
     )> {
         let (resync_last_slot, mut all_signatures) = self
             .get_signatures_for_address_with_config(
@@ -259,12 +260,20 @@ where
             all_signatures.reverse();
         }
 
+        // If any of tx in resync batch failed, then not move last resync transaction pointer
+        let last_transaction = match self.resync_order {
+            ResyncOrder::Newest => all_signatures.first(),
+            ResyncOrder::Historical => all_signatures.last(),
+        }
+        .copied();
+
         Ok((
             resync_last_slot,
             NonEmptyVec::try_from(
                 self.local_storage
                     .filter_unregistered_transactions(&self.program_id, &all_signatures)?,
             ),
+            last_transaction
         ))
     }
 
@@ -273,7 +282,7 @@ where
             tokio::time::sleep(self.resync_duration).await;
             tracing::info!("Start resync: {}", self.program_id);
 
-            let (resync_last_slot, signatures) = unwrap_or_continue!(
+            let (resync_last_slot, signatures, mut last_transaction) = unwrap_or_continue!(
                 self.get_unregistered_program_transactions().await,
                 "Error while get unregistered program signature: {err:?}"
             );
@@ -284,13 +293,6 @@ where
                     continue 'resync;
                 }
             };
-
-            // If any of tx in resync batch failed, then not move last resync transaction pointer
-            let mut last_transaction = match self.resync_order {
-                ResyncOrder::Newest => Some(signatures.first()),
-                ResyncOrder::Historical => Some(signatures.last()),
-            }
-            .copied();
 
             let signatures_chunks = signatures
                 .as_slice()
