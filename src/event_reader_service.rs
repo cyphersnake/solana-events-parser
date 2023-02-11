@@ -273,7 +273,7 @@ where
                 self.local_storage
                     .filter_unregistered_transactions(&self.program_id, &all_signatures)?,
             ),
-            last_transaction
+            last_transaction,
         ))
     }
 
