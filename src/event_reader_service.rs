@@ -61,6 +61,8 @@ pub enum Error {
     ClientError(#[from] solana_client::client_error::ClientError),
     #[error("Error while use storage: {0}")]
     StorageError(String),
+    #[error(transparent)]
+    Client(#[from] de_solana_client::Error),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -206,6 +208,7 @@ where
                     .local_storage
                     .is_transaction_registered(&self.program_id, &tx_signature)?
                 {
+                    tracing::trace!("Transaction {tx_signature} already registered, skip");
                     continue;
                 }
 
@@ -247,8 +250,11 @@ where
         result::Result<NonEmptyVec<SolanaSignature>, EmptyError>,
         Option<SolanaSignature>,
     )> {
-        let (resync_last_slot, mut all_signatures) = self
-            .get_signatures_for_address_with_config(
+        use de_solana_client::GetTransactionsSignaturesForAddress;
+
+        let resync_last_slot = self.client.get_slot().await?;
+        let all_signatures = <RpcClient as GetTransactionsSignaturesForAddress>::get_signatures_data_for_address_with_config(
+                &self.client,
                 &self.program_id,
                 self.commitment_config,
                 self.local_storage
@@ -256,16 +262,18 @@ where
             )
             .await?;
 
-        if self.resync_order == ResyncOrder::Historical {
-            all_signatures.reverse();
-        }
-
         // If any of tx in resync batch failed, then not move last resync transaction pointer
-        let last_transaction = match self.resync_order {
-            ResyncOrder::Newest => all_signatures.first(),
-            ResyncOrder::Historical => all_signatures.last(),
-        }
-        .copied();
+        let last_transaction = all_signatures.first().map(|d| d.signature);
+
+        let all_signatures: Vec<SolanaSignature> = if self.resync_order == ResyncOrder::Historical {
+            all_signatures
+                .into_iter()
+                .map(|d| d.signature)
+                .rev()
+                .collect()
+        } else {
+            all_signatures.into_iter().map(|d| d.signature).collect()
+        };
 
         Ok((
             resync_last_slot,
@@ -290,6 +298,10 @@ where
                 Ok(non_empty_signatures) => non_empty_signatures,
                 Err(EmptyError) => {
                     (self.resync_ptr_setter)(resync_last_slot).await?;
+                    if let Some(last_transaction) = last_transaction {
+                        self.local_storage
+                            .set_last_resynced_transaction(&self.program_id, &last_transaction)?;
+                    }
                     continue 'resync;
                 }
             };
@@ -362,6 +374,7 @@ where
                     }
                 };
             }
+
             if !tasks_success {
                 continue 'resync;
             }
@@ -382,74 +395,5 @@ where
             .bind_transaction_instructions_logs(tx_signature)
             .await
             .map_err(Error::EventParserError)
-    }
-
-    async fn get_signatures_for_address_with_config(
-        &self,
-        address: &Pubkey,
-        commitment_config: CommitmentConfig,
-        until: Option<SolanaSignature>,
-    ) -> Result<(u64, Vec<SolanaSignature>)> {
-        let mut all_signatures = vec![];
-        let mut before = None;
-
-        // TODO Change to batch request
-        let resync_last_slot = self
-            .client
-            .get_slot_with_commitment(commitment_config)
-            .await
-            .map_err(|err| {
-                tracing::error!("Error while get resync last slot: {:?}", err);
-                Error::ClientError(err)
-            })?;
-
-        loop {
-            tracing::trace!(
-                "Request signature batch, before: {:?}, until: {:?}",
-                before,
-                until
-            );
-
-            let signatures_batch = self
-                .client
-                .get_signatures_for_address_with_config(
-                    address,
-                    solana_client::rpc_client::GetConfirmedSignaturesForAddress2Config {
-                        before,
-                        until,
-                        limit: None,
-                        commitment: Some(commitment_config),
-                    },
-                )
-                .await
-                .map_err(|err| {
-                    tracing::error!(
-                        "Error while get signature for address with config: {:?}",
-                        err
-                    );
-                    Error::ClientError(err)
-                })?
-                .into_iter()
-                .filter(|tx| tx.err.is_none())
-                .map(|tx| {
-                    tx.signature.parse().map_err(
-                        |err: solana_sdk::signature::ParseSignatureError| {
-                            Error::SignatureParsingError(err.to_string())
-                        },
-                    )
-                })
-                .collect::<Result<Vec<_>>>()?;
-
-            if signatures_batch.is_empty() {
-                break;
-            }
-
-            before = signatures_batch.last().copied();
-
-            all_signatures = [signatures_batch, all_signatures].concat();
-        }
-        all_signatures.reverse();
-
-        Ok((resync_last_slot, all_signatures))
     }
 }
