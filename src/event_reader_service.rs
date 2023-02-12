@@ -1,4 +1,8 @@
-use std::{result, sync::Arc, time::Duration};
+use std::{
+    result,
+    sync::{Arc, RwLock},
+    time::Duration,
+};
 
 use async_trait::async_trait;
 use futures::{future::BoxFuture, StreamExt};
@@ -112,6 +116,8 @@ where
     pub resync_signatures_chunk_size: Option<usize>,
     pub resync_ptr_setter: Arc<dyn Send + Sync + Fn(u64) -> BoxFuture<'static, Result<()>>>,
     pub resync_order: ResyncOrder,
+
+    pub resync_rollback: Arc<RwLock<Option<SolanaSignature>>>,
 }
 
 impl<TransactionConsumerFn, EventRecipient, E>
@@ -253,12 +259,15 @@ where
         use de_solana_client::GetTransactionsSignaturesForAddress;
 
         let resync_last_slot = self.client.get_slot().await?;
+        let resync_start = self
+            .local_storage
+            .get_last_resynced_transaction(&self.program_id)?;
+        tracing::info!("Resync start {resync_start:?}");
         let all_signatures = <RpcClient as GetTransactionsSignaturesForAddress>::get_signatures_data_for_address_with_config(
                 &self.client,
                 &self.program_id,
                 self.commitment_config,
-                self.local_storage
-                    .get_last_resynced_transaction(&self.program_id)?,
+                resync_start
             )
             .await?;
 
@@ -268,11 +277,14 @@ where
         let all_signatures: Vec<SolanaSignature> = if self.resync_order == ResyncOrder::Historical {
             all_signatures
                 .into_iter()
-                .map(|d| d.signature)
+                .filter_map(|d| d.err.is_none().then_some(d.signature))
                 .rev()
                 .collect()
         } else {
-            all_signatures.into_iter().map(|d| d.signature).collect()
+            all_signatures
+                .into_iter()
+                .filter_map(|d| d.err.is_none().then_some(d.signature))
+                .collect()
         };
 
         Ok((
@@ -299,8 +311,7 @@ where
                 Err(EmptyError) => {
                     (self.resync_ptr_setter)(resync_last_slot).await?;
                     if let Some(last_transaction) = last_transaction {
-                        self.local_storage
-                            .set_last_resynced_transaction(&self.program_id, &last_transaction)?;
+                        self.set_last_resynced_transaction(&last_transaction)?;
                     }
                     continue 'resync;
                 }
@@ -380,11 +391,33 @@ where
             }
 
             if let Some(last_transaction) = last_transaction {
-                self.local_storage
-                    .set_last_resynced_transaction(&self.program_id, &last_transaction)?;
+                self.set_last_resynced_transaction(&last_transaction)?;
             }
             (self.resync_ptr_setter)(resync_last_slot).await?;
         }
+    }
+
+    fn set_last_resynced_transaction(
+        self: &Arc<Self>,
+        last_transaction: &SolanaSignature,
+    ) -> Result<()> {
+        let last_transaction = self
+            .resync_rollback
+            .write()
+            .ok()
+            .and_then(|mut write| {
+                write.take().map(|tx| {
+                    tracing::info!("found rollback to {tx}");
+                    tx
+                })
+            })
+            .unwrap_or(*last_transaction);
+
+        tracing::info!("Set last resynced tx to {last_transaction}");
+        self.local_storage
+            .set_last_resynced_transaction(&self.program_id, &last_transaction)?;
+
+        Ok(())
     }
 
     async fn get_transaction_by_signature(

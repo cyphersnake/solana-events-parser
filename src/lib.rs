@@ -19,3 +19,6 @@ pub mod storage;
 
 #[cfg(feature = "event-reader")]
 pub mod event_reader_service;
+
+#[cfg(feature = "solana")]
+pub use de_solana_client;

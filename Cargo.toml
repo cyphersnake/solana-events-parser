@@ -1,13 +1,13 @@
 [package]
 name = "solana-events-parser"
-version = "0.2.1-alpha.11"
+version = "0.3.0-alpha.0"
 publish = true
 edition = "2021"
 
 [features]
 default = ["solana", "anchor", "storage", "rocksdb", "event-reader"]
 unknown_log = []
-solana = ["dep:solana-client", "dep:solana-sdk", "dep:solana-transaction-status"]
+solana = ["dep:solana-client", "dep:solana-sdk", "dep:solana-transaction-status", "dep:de-solana-client"]
 anchor = ["solana", "dep:anchor-lang", "dep:base64"]
 storage = ["solana"]
 rocksdb = ["dep:rocksdb", "dep:bincode"]
@@ -39,6 +39,7 @@ non-empty-vec = { version = "0.2.3", optional = true }
 result-inspect = "0.2.0"
 
 [dependencies.de-solana-client]
-version = "0.3.0"
+version = "0.3.2"
 git = "ssh://git@github.com/debridge-finance/de-solana-client.git"
-tag = "v0.3.0"
+tag = "v0.3.2"
+optional = true
