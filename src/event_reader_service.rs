@@ -137,40 +137,37 @@ where
     Error: From<E>,
 {
     pub async fn run(self: Arc<Self>) -> Result<()> {
-        let listen_events = {
-            let self_ref = Arc::clone(&self);
-            let program_id = self.program_id.to_string();
-            tokio::task::spawn(async move {
-                self_ref
-                    .listen_events()
-                    .instrument(tracing::span!(
-                        tracing::Level::TRACE,
-                        "Listen Events",
-                        program_id = program_id
-                    ))
-                    .await
-            })
-        };
-        let resync_events = {
-            let self_ref = Arc::clone(&self);
-            let program_id = self.program_id.to_string();
-            tokio::task::spawn(async move {
-                self_ref
-                    .resync_events()
-                    .instrument(tracing::span!(
-                        tracing::Level::TRACE,
-                        "Resync Event",
-                        program_id = program_id,
-                    ))
-                    .await
-            })
-        };
-        listen_events
-            .await?
-            .inspect_err(|err| tracing::error!("Error while listen events: {err:?}"))?;
-        resync_events
-            .await?
-            .inspect_err(|err| tracing::error!("Error while resync events: {err:?}"))?;
+        let mut tasks = tokio::task::JoinSet::default();
+        let self_ref = Arc::clone(&self);
+        let program_id = self.program_id.to_string();
+        tasks.spawn(async move {
+            self_ref
+                .listen_events()
+                .instrument(tracing::span!(
+                    tracing::Level::TRACE,
+                    "Listen Events",
+                    program_id = program_id
+                ))
+                .await
+        });
+        let self_ref = Arc::clone(&self);
+        let program_id = self.program_id.to_string();
+        tasks.spawn(async move {
+            self_ref
+                .resync_events()
+                .instrument(tracing::span!(
+                    tracing::Level::TRACE,
+                    "Resync Event",
+                    program_id = program_id,
+                ))
+                .await
+        });
+
+        while let Some(result) = tasks.join_next().await {
+            result
+                .inspect_err(|err| tracing::error!("Error while join task: {err:?}"))?
+                .inspect_err(|err| tracing::error!("Error while task: {err:?}"))?;
+        }
         Ok(())
     }
 
