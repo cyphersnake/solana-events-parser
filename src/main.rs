@@ -1,4 +1,5 @@
 use anyhow::anyhow;
+use de_solana_client::CommitmentConfig;
 use simple_logger::SimpleLogger;
 
 #[tokio::main]
@@ -28,6 +29,7 @@ async fn main() -> Result<(), anyhow::Error> {
                         err
                     )
                 })?,
+                CommitmentConfig::finalized(),
             )
             .await
             .map_err(|err| anyhow!("Error while bind transaction instructions: {}", err))?

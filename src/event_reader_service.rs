@@ -422,7 +422,7 @@ where
         tx_signature: SolanaSignature,
     ) -> Result<TransactionParsedMeta> {
         self.client
-            .bind_transaction_instructions_logs(tx_signature)
+            .bind_transaction_instructions_logs(tx_signature, self.commitment_config)
             .await
             .map_err(Error::EventParserError)
     }

@@ -340,6 +340,7 @@ pub trait BindTransactionInstructionLogs {
     async fn bind_transaction_instructions_logs(
         &self,
         signature: Signature,
+        commitment_config: CommitmentConfig,
     ) -> Result<TransactionParsedMeta, Error>;
 }
 
@@ -348,6 +349,7 @@ impl BindTransactionInstructionLogs for RpcClient {
     async fn bind_transaction_instructions_logs(
         &self,
         signature: Signature,
+        commitment_config: CommitmentConfig,
     ) -> Result<TransactionParsedMeta, Error> {
         let EncodedConfirmedTransactionWithStatusMeta {
             transaction,
@@ -359,7 +361,7 @@ impl BindTransactionInstructionLogs for RpcClient {
                 RpcTransactionConfig {
                     encoding: Some(UiTransactionEncoding::Base58),
                     max_supported_transaction_version: Some(0),
-                    commitment: Some(CommitmentConfig::finalized()),
+                    commitment: Some(commitment_config),
                 },
             )
             .await?;
