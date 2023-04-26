@@ -1,6 +1,13 @@
 use std::{
-    collections::HashMap, fmt::Debug, io, io::ErrorKind, marker::PhantomData, num::ParseIntError,
-    pin::Pin, str::FromStr, sync::Arc,
+    collections::HashMap,
+    fmt::{self, Debug},
+    io,
+    io::ErrorKind,
+    marker::PhantomData,
+    num::ParseIntError,
+    pin::Pin,
+    str::FromStr,
+    sync::Arc,
 };
 
 use anchor_lang::AnchorDeserialize;
@@ -120,6 +127,17 @@ pub struct DecomposedInstruction<IX, ACCOUNTS> {
     pub ix: IX,
     pub accounts: ACCOUNTS,
     pub logs: Vec<ProgramLog>,
+}
+
+impl<IX: Debug, ACCOUNTS: Debug> fmt::Debug for DecomposedInstruction<IX, ACCOUNTS> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DecomposedInstruction")
+            .field("program_ctx", &self.program_ctx)
+            .field("ix", &self.ix)
+            .field("accounts", &self.accounts)
+            .field("logs", &self.logs)
+            .finish()
+    }
 }
 
 #[async_trait]

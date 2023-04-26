@@ -3234,7 +3234,7 @@ dependencies = [
 
 [[package]]
 name = "solana-events-parser"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anchor-lang",
  "anyhow",
