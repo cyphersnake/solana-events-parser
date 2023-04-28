@@ -144,7 +144,7 @@ where
             self_ref
                 .listen_events()
                 .instrument(tracing::span!(
-                    tracing::Level::TRACE,
+                    tracing::Level::ERROR,
                     "Listen Events",
                     program_id = program_id
                 ))
@@ -156,7 +156,7 @@ where
             self_ref
                 .resync_events()
                 .instrument(tracing::span!(
-                    tracing::Level::TRACE,
+                    tracing::Level::ERROR,
                     "Resync Event",
                     program_id = program_id,
                 ))
@@ -172,7 +172,7 @@ where
     }
 
     async fn listen_events(&self) -> Result<()> {
-        tracing::info!("Launching pubsub client");
+        tracing::info!("Launching websocket client");
 
         let (stream, _unsubscribe) = self
             .pubsub_client
@@ -182,7 +182,7 @@ where
                     commitment: Some(self.commitment_config),
                 },
             )
-            .instrument(tracing::span!(tracing::Level::TRACE, "LogsSubscribe"))
+            .instrument(tracing::span!(tracing::Level::ERROR, "LogsSubscribe"))
             .await
             .inspect_err(|err| tracing::error!("Error while subs: {err:?}"))
             .map_err(|err| Error::WebsocketError(err.to_string()))?;
@@ -193,7 +193,7 @@ where
                 subscription_response.value.signature
             );
         });
-        tracing::info!("Ready to listen");
+        tracing::info!("Start listening websocket events");
         loop {
             if let Some(subscription_response) = stream.next().await {
                 let tx_signature = unwrap_or_continue!(
@@ -207,41 +207,65 @@ where
                     "Error while tx signature parsing: {err:?}"
                 );
 
-                if self
-                    .local_storage
-                    .is_transaction_registered(&self.program_id, &tx_signature)?
                 {
-                    tracing::trace!("Transaction {tx_signature} already registered, skip");
-                    continue;
-                }
-
-                match (self.event_consumer)(subscription_response.value.logs) {
-                    Ok(EventConsumeResult::ConsumeSuccess) => (),
-                    Ok(EventConsumeResult::TransactionNeeed) => {
-                        let transaction = unwrap_or_continue!(
-                            self.get_transaction_by_signature(tx_signature).await,
-                            "Error while transaction requesting {err:?}"
+                    if self
+                        .local_storage
+                        .is_transaction_registered(&self.program_id, &tx_signature)?
+                    {
+                        tracing::info!(
+                            "Transaction {tx_signature} already registered in event-parser, skip"
                         );
-
-                        if let Err(err) = (self.transaction_consumer)(
-                            tx_signature,
-                            transaction,
-                            Arc::clone(&self.client),
-                            Arc::clone(&self.event_recipient),
-                        )
-                        .await
-                        {
-                            tracing::error!("Error while transaction consuming {err:?}", err = err);
-                        }
-                    }
-                    Err(err) => {
-                        tracing::error!("Error while events consuming {:?}", err);
                         continue;
                     }
-                };
 
-                self.local_storage
-                    .register_transaction(&self.program_id, &tx_signature)?;
+                    tracing::info!("Transaction {tx_signature} not registered yet, processing");
+
+                    match (self.event_consumer)(subscription_response.value.logs) {
+                        Ok(EventConsumeResult::ConsumeSuccess) => {
+                            tracing::info!("Transaction {tx_signature} consumed successful by ws information only");
+                        }
+                        Ok(EventConsumeResult::TransactionNeeed) => {
+                            tracing::info!("Transaction {tx_signature} direct RPC request needed");
+                            let transaction = unwrap_or_continue!(
+                                self.get_transaction_by_signature(tx_signature).await,
+                                "Error while transaction {tx_signature} requesting {err:?}"
+                            );
+
+                            let transaction_str = tx_signature.to_string();
+                            if let Err(err) = (self.transaction_consumer)(
+                                tx_signature,
+                                transaction,
+                                Arc::clone(&self.client),
+                                Arc::clone(&self.event_recipient),
+                            )
+                            .instrument(tracing::span!(
+                                tracing::Level::ERROR,
+                                "Consume",
+                                tx_signature = transaction_str
+                            ))
+                            .await
+                            {
+                                tracing::error!(
+                                    "Error while transaction {transaction_str} consuming {err:?}",
+                                    err = err
+                                );
+                            } else {
+                                tracing::info!(
+                                    "Transaction {transaction_str} consumed as part of websocket listener",
+                                );
+                            }
+                        }
+                        Err(err) => {
+                            tracing::error!(
+                                "Error while events consuming {err:?} of {tx_signature}"
+                            );
+                            continue;
+                        }
+                    };
+
+                    self.local_storage
+                        .register_transaction(&self.program_id, &tx_signature)?;
+                }
             }
         }
     }
@@ -259,7 +283,13 @@ where
         let resync_start = self
             .local_storage
             .get_last_resynced_transaction(&self.program_id)?;
-        tracing::info!("Resync start {resync_start:?}");
+        tracing::info!(
+            "Resync start from {}",
+            resync_start
+                .as_ref()
+                .map(|tx| format!("{tx} transaction"))
+                .unwrap_or("beginning".to_owned())
+        );
         let all_signatures = <RpcClient as GetTransactionsSignaturesForAddress>::get_signatures_data_for_address_with_config(
                 &self.client,
                 &self.program_id,
@@ -297,7 +327,7 @@ where
     async fn resync_events(self: &Arc<Self>) -> Result<()> {
         'resync: loop {
             tokio::time::sleep(self.resync_duration).await;
-            tracing::info!("Start resync: {}", self.program_id);
+            tracing::info!("Start resync for program {}", self.program_id);
 
             let (resync_last_slot, signatures, mut last_transaction) = unwrap_or_continue!(
                 self.get_unregistered_program_transactions().await,
@@ -310,9 +340,15 @@ where
                     if let Some(last_transaction) = last_transaction {
                         self.set_last_resynced_transaction(&last_transaction)?;
                     }
+                    tracing::info!("Resync ended: no new transactions");
                     continue 'resync;
                 }
             };
+
+            tracing::info!(
+                "Find new {} transactions, start processing",
+                signatures.len()
+            );
 
             let signatures_chunks = signatures
                 .as_slice()
@@ -330,7 +366,7 @@ where
                 tasks.spawn(async move {
                     for tx_signature in signatures_chunk.into_iter() {
                         tracing::info!(
-                            "Unprocessed transaction find while resynchronization process, transaction hash: {}",
+                            "Unprocessed (by ws) transaction find while resynchronization process, transaction hash: {}",
                             tx_signature.to_string()
                         );
 
@@ -340,6 +376,7 @@ where
                             "Error while get transaction by signature: {err:?}"
                         );
 
+                        let transaction_str = tx_signature.to_string();
                         if let Err(err) = (self_clone.transaction_consumer)(
                             tx_signature,
                             transaction,
@@ -348,9 +385,9 @@ where
                         )
                         .await
                         {
-                            tracing::error!("Error while transaction consuming {err:?}", err = err);
+                            tracing::error!("Error while transaction {transaction_str} consuming {err:?}", err = err);
                         } else {
-                            tracing::info!("Transaction {} consumed", tx_signature);
+                            tracing::info!("Transaction {tx_signature} consumed as part of resync process");
                         }
 
                         self_clone
@@ -361,7 +398,7 @@ where
                     Result::Ok(())
                 }
                     .instrument(tracing::span!(
-                        tracing::Level::TRACE,
+                        tracing::Level::ERROR,
                         "Register chunk",
                         chunk_index = index,
                     ))
@@ -384,12 +421,17 @@ where
             }
 
             if !tasks_success {
+                tracing::warn!("Some of resync tasks failed, not move resync ptr");
                 continue 'resync;
             }
 
             if let Some(last_transaction) = last_transaction {
+                tracing::warn!("resync successful ended, ptr moved to {last_transaction}");
                 self.set_last_resynced_transaction(&last_transaction)?;
+            } else {
+                tracing::warn!("resync successful ended, not new ptr for move");
             }
+
             (self.resync_ptr_setter)(resync_last_slot).await?;
         }
     }
@@ -404,13 +446,13 @@ where
             .ok()
             .and_then(|mut write| {
                 write.take().map(|tx| {
-                    tracing::info!("found rollback to {tx}");
+                    tracing::info!("Found rollback to {tx} transaction");
                     tx
                 })
             })
             .unwrap_or(*last_transaction);
 
-        tracing::info!("Set last resynced tx to {last_transaction}");
+        tracing::info!("Set last resynced tx to {last_transaction} transaction");
         self.local_storage
             .set_last_resynced_transaction(&self.program_id, &last_transaction)?;
 
