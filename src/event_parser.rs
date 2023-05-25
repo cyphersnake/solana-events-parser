@@ -16,6 +16,7 @@ pub trait ParseEvent {
         program_id: Pubkey,
     ) -> Option<Result<T, io::Error>>;
 }
+
 impl ParseEvent for ProgramLog {
     fn parse_event<E: Discriminator + Owner + AnchorDeserialize>(
         &self,

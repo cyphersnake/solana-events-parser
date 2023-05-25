@@ -26,9 +26,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
-      - uses: webfactory/ssh-agent@v0.7.0
-        with:
-          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY}}
       - uses: actions-rs/toolchain@v1
         with:
           profile: minimal
@@ -47,9 +44,6 @@ jobs:
       RUSTLOG: info
     steps:
       - uses: actions/checkout@v2
-      - uses: webfactory/ssh-agent@v0.7.0
-        with:
-          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY}}
       - uses: actions-rs/toolchain@v1
         with:
           profile: minimal

@@ -114,6 +114,7 @@ pub type ChildProgramContext = ProgramContext;
 pub type ParentProgramContext = ProgramContext;
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TransactionParsedMeta {
+    /// All internal instructions with logs
     pub meta: HashMap<ProgramContext, (Instruction, Vec<ProgramLog>)>,
     pub slot: Slot,
     pub block_time: Option<UnixTimestamp>,

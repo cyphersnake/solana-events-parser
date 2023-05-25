@@ -1,8 +1,18 @@
 [package]
 name = "solana-events-parser"
 version = "0.3.4"
+authors = [
+    "cyphersnake <cyphersnake@pm.me>",
+    "shinkarenko  <shinbogdan@gmail.com>",
+    "twoflower <ptekhazhevgm@gmail.com>"
+]
+repository = "https://github.com/cyphersnake/solana-events-parser"
+homepage = "https://github.com/cyphersnake/solana-events-parser"
+description = "Provides various utilities for working with Solana blockchain transactions and events"
 publish = true
+keywords = ["solana", "anchor", "blockchain", "utilities"]
 edition = "2021"
+license = "MIT"
 
 [features]
 default = ["solana", "anchor", "storage", "rocksdb", "event-reader"]
@@ -14,32 +24,33 @@ rocksdb = ["dep:rocksdb", "dep:bincode"]
 event-reader = ["storage", "dep:futures", "dep:thiserror", "dep:non-empty-vec"]
 
 [dependencies]
-bs58 = "0.4.0"
+anyhow = "1.0.71"
+async-trait = "0.1.68" 
+base64 = { version = "0.13.0", optional = true }
+bincode = { version = "1.3.3", optional = true }
+bs58 = "0.5.0"
+futures = { version = "0.3", optional = true }
 lazy_static = "1.4.0"
-regex = "1.5.4"
-simple_logger = "4.0.0"
-serde = { version = "1.0.137", features = ["derive"] }
-serde_json = "1.0.81"
-anyhow = "1.0.69"
-async-trait = "0.1.64" 
-tokio = "1.14.1"
+non-empty-vec = { version = "0.2.3", optional = true }
+regex = "1.8.2"
+result-inspect = "0.3.0"
+rocksdb = { version = "0.21.0", optional = true }
+serde = { version = "1.0.163", features = ["derive"] }
+serde_json = "1.0.96"
+simple_logger = "4.1.0"
+solana-client = { version = "1.14.18", optional = true }
+solana-sdk = { version = "1.14.18", optional = true }
+solana-transaction-status = { version = "1.14.18", optional = true }
+thiserror = { version = "1.0.40", optional = true }
+tokio = "1.28.1"
 tracing = "0.1.37"
 
-anchor-lang = { git = "https://github.com/debridge-finance/anchor.git", branch = "update-solana-version", optional = true}
-
-futures = { version = "0.3", optional = true }
-solana-client = { version = "1.14.7", optional = true }
-solana-sdk = { version = "1.14.7", optional = true }
-solana-transaction-status = { version = "1.14.7", optional = true }
-base64 = { version = "0.13.0", optional = true }
-rocksdb = { version = "0.21.0", optional = true }
-bincode = { version = "1.3.3", optional = true }
-thiserror = { version = "1.0.30", optional = true }
-non-empty-vec = { version = "0.2.3", optional = true }
-result-inspect = "0.2.0"
-
 [dependencies.de-solana-client]
-version = "0.3.2"
-git = "ssh://git@github.com/debridge-finance/de-solana-client.git"
-tag = "v0.3.2"
+version = "0.3.3"
+optional = true
+
+[dependencies.anchor-lang]
+version = "0.25.0"
+git = "https://github.com/debridge-finance/anchor.git"
+branch = "update-solana-version"
 optional = true
