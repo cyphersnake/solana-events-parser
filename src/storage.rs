@@ -1,20 +1,35 @@
+//! This module is used to help the [`crate::event_reader_service`] storage management
+//! It allows us to keep track of which transactions have already been processed
+//! (registered) and store a pointer to the transaction - resync boundary
+
 pub use crate::transaction_parser::{Pubkey, Signature as SolanaSignature};
 
+/// [`RegisterTransaction`] is a trait for managing transactions.
+///
+/// It provides methods for registering a transaction, checking if a transaction is registered,
+/// and filtering unregistered transactions.
 pub trait RegisterTransaction {
     type Error;
 
+    /// Register a transaction with the given `program_id` and `transaction_hash`.
     fn register_transaction(
         &self,
         program_id: &Pubkey,
         transaction_hash: &SolanaSignature,
     ) -> Result<(), Self::Error>;
 
+    /// Check if a transaction with the given `program_id` and `transaction_hash` is registered
+    /// with [`RegisterTransaction::register_transaction`] before
     fn is_transaction_registered(
         &self,
         program_id: &Pubkey,
         transaction_hash: &SolanaSignature,
     ) -> Result<bool, Self::Error>;
 
+    /// Given a `program_id` and a list of transactions (`transaction_hash_set`),
+    /// filter out those that are not registered.
+    ///
+    /// Returns a `Result` containing a `Vec` of unregistered `SolanaSignature`
     fn filter_unregistered_transactions(
         &self,
         program_id: &Pubkey,
@@ -22,18 +37,25 @@ pub trait RegisterTransaction {
     ) -> Result<Vec<SolanaSignature>, Self::Error>;
 }
 
+/// This trait extends [`RegisterTransaction`]
+/// and provides methods for managing the last resynced transaction.
 pub trait ResyncedTransactionsPtrStorage: RegisterTransaction {
+    /// Initializes the last resynced transaction if it's not initialized before.
     fn initialize_if_needed_resynced_transaction(
         &self,
         program_id: &Pubkey,
         transaction: &SolanaSignature,
     ) -> Result<(), <Self as RegisterTransaction>::Error>;
 
+    /// Get last resynced transaction, initialized
+    /// by [`ResyncedTransactionsPtrStorage::initialize_if_needed_resynced_transaction`] or
+    /// setted by [`ResyncedTransactionsPtrStorage::set_last_resynced_transaction`]
     fn get_last_resynced_transaction(
         &self,
         program_id: &Pubkey,
     ) -> Result<Option<SolanaSignature>, <Self as RegisterTransaction>::Error>;
 
+    /// Set last recyned transaction into new one
     fn set_last_resynced_transaction(
         &self,
         program_id: &Pubkey,
@@ -132,6 +154,7 @@ pub mod rocksdb {
             program_id: &Pubkey,
             transaction: &SolanaSignature,
         ) -> Result<(), <Self as RegisterTransaction>::Error> {
+            // FIXME: remove non-atomic set
             if self.get_last_resynced_transaction(program_id)?.is_none() {
                 self.set_last_resynced_transaction(program_id, transaction)?;
             }

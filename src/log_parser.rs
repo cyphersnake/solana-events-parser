@@ -271,7 +271,11 @@ pub struct ProgramReturn {
 #[derive(Clone, Copy, Hash, PartialEq, Eq, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ProgramContext {
     pub program_id: Pubkey,
-    pub call_index: usize,
+    /// The index of how many times a `program_id`
+    /// has been called in the current transaction
+    pub program_call_index: usize,
+    /// The depth of this call.
+    /// For transaction's instructions - 1
     pub invoke_level: NonZeroU8,
 }
 
@@ -316,7 +320,7 @@ pub fn bind_events(
                 let new_ctx = ProgramContext {
                     program_id,
                     invoke_level: level,
-                    call_index: get_and_update_call_index(program_id),
+                    program_call_index: get_and_update_call_index(program_id),
                 };
                 if let Ok(ctx) = last_at_stack(&programs_stack, index) {
                     result
@@ -747,14 +751,14 @@ Program M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K success"##;
                 ProgramContext {
                     program_id: Pubkey::from_str("M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K")
                         .unwrap(),
-                    call_index: 0,
+                    program_call_index: 0,
                     invoke_level: Level::new(1).unwrap(),
                 },
                 vec![
                     ProgramLog::Log("Instruction: Deposit".to_owned()),
                     ProgramLog::Invoke(ProgramContext {
                         program_id: Pubkey::from_str("11111111111111111111111111111111").unwrap(),
-                        call_index: 0,
+                        program_call_index: 0,
                         invoke_level: Level::new(2).unwrap(),
                     }),
                     ProgramLog::Consumed {
@@ -766,7 +770,7 @@ Program M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K success"##;
             (
                 ProgramContext {
                     program_id: Pubkey::from_str("11111111111111111111111111111111").unwrap(),
-                    call_index: 0,
+                    program_call_index: 0,
                     invoke_level: Level::new(2).unwrap(),
                 },
                 vec![],
@@ -775,14 +779,14 @@ Program M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K success"##;
                 ProgramContext {
                     program_id: Pubkey::from_str("M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K")
                         .unwrap(),
-                    call_index: 1,
+                    program_call_index: 1,
                     invoke_level: Level::new(1).unwrap(),
                 },
                 vec![
                     ProgramLog::Log("Instruction: Buy".to_owned()),
                     ProgramLog::Invoke(ProgramContext {
                         program_id: Pubkey::from_str("11111111111111111111111111111111").unwrap(),
-                        call_index: 1,
+                        program_call_index: 1,
                         invoke_level: Level::new(2).unwrap(),
                     }),
                     ProgramLog::Log("{\"price\":17800000000,\"buyer_expiry\":0}".to_owned()),
@@ -795,7 +799,7 @@ Program M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K success"##;
             (
                 ProgramContext {
                     program_id: Pubkey::from_str("11111111111111111111111111111111").unwrap(),
-                    call_index: 1,
+                    program_call_index: 1,
                     invoke_level: Level::new(2).unwrap(),
                 },
                 vec![],
@@ -823,7 +827,7 @@ Program M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K success"##;
             ProgramContext {
                 program_id: Pubkey::from_str("M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K")
                     .unwrap(),
-                call_index: 0,
+                program_call_index: 0,
                 invoke_level: Level::new(1).unwrap(),
             },
             vec![
@@ -860,7 +864,7 @@ Program BPFLoaderUpgradeab1e11111111111111111111111 success"##;
             ProgramContext {
                 program_id: Pubkey::from_str("BPFLoaderUpgradeab1e11111111111111111111111")
                     .unwrap(),
-                call_index: 0,
+                program_call_index: 0,
                 invoke_level: Level::new(1).unwrap(),
             },
             vec![ProgramLog::UpgradedProgram(
@@ -893,7 +897,7 @@ Program BPFLoaderUpgradeab1e11111111111111111111111 success"##;
             (
                 ProgramContext {
                     program_id: Pubkey::from_str("11111111111111111111111111111111").unwrap(),
-                    call_index: 0,
+                    program_call_index: 0,
                     invoke_level: Level::new(1).unwrap(),
                 },
                 vec![],
@@ -901,7 +905,7 @@ Program BPFLoaderUpgradeab1e11111111111111111111111 success"##;
             (
                 ProgramContext {
                     program_id: Pubkey::from_str("11111111111111111111111111111111").unwrap(),
-                    call_index: 1,
+                    program_call_index: 1,
                     invoke_level: Level::new(2).unwrap(),
                 },
                 vec![],
@@ -910,13 +914,13 @@ Program BPFLoaderUpgradeab1e11111111111111111111111 success"##;
                 ProgramContext {
                     program_id: Pubkey::from_str("BPFLoaderUpgradeab1e11111111111111111111111")
                         .unwrap(),
-                    call_index: 0,
+                    program_call_index: 0,
                     invoke_level: Level::new(1).unwrap(),
                 },
                 vec![
                     ProgramLog::Invoke(ProgramContext {
                         program_id: Pubkey::from_str("11111111111111111111111111111111").unwrap(),
-                        call_index: 1,
+                        program_call_index: 1,
                         invoke_level: Level::new(2).unwrap(),
                     }),
                     ProgramLog::DeployedProgram(

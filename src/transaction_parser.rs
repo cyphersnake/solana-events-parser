@@ -402,7 +402,7 @@ impl BindTransactionInstructionLogs for RpcClient {
             .map(|(ctx, events)| {
                 let ix_ctx = InstructionContext {
                     program_id: ctx.program_id,
-                    call_index: ctx.call_index,
+                    call_index: ctx.program_call_index,
                 };
                 let (ix, outer_ix) = instructions
                     .remove(&ix_ctx)

@@ -40,7 +40,7 @@ pub struct InstructionContext {
     pub call_index: usize,
 }
 
-pub type OuterInstruction = Option<Pubkey>;
+pub type OuterInstructionProgramId = Option<Pubkey>;
 
 pub trait GetLoadedAccounts {
     fn get_loaded_accounts(&self) -> Option<Result<Vec<Pubkey>, Error>>;
@@ -73,22 +73,41 @@ impl GetLoadedAccounts for EncodedTransactionWithStatusMeta {
     }
 }
 
+/// [`BindInstructions`] trait provides a method to bind an `Instruction` to its context.
 pub trait BindInstructions {
+    /// Bind instructions the transaction into separate contexts.
+    ///
+    /// As decoding errors are possible and the original instruction signature
+    /// may not be obtained, it is passed in parameters.
     fn bind_instructions(
         &self,
         signature: Signature,
-    ) -> Result<HashMap<InstructionContext, (Instruction, OuterInstruction)>, Error>;
+    ) -> Result<HashMap<InstructionContext, (Instruction, OuterInstructionProgramId)>, Error>;
 }
 impl BindInstructions for EncodedTransactionWithStatusMeta {
+    /// Bind instructions the transaction into separate contexts.
+    ///
+    /// As decoding errors are possible and the original instruction signature
+    /// may not be obtained, it is passed in parameters.
+    ///
+    /// It starts by decoding the transaction and loading the accounts. Then it iterates through
+    /// all instructions of the transaction and binds each instruction to its context. The context
+    /// is created by using the program id of the instruction and a call index which is incrementing
+    /// with each call of the same program id.
     fn bind_instructions(
         &self,
         signature: Signature,
-    ) -> Result<HashMap<InstructionContext, (Instruction, OuterInstruction)>, Error> {
-        let msg = self
+    ) -> Result<HashMap<InstructionContext, (Instruction, OuterInstructionProgramId)>, Error> {
+        let tx = self
             .transaction
             .decode()
-            .ok_or(Error::ErrorWhileDecodeTransaction(signature))?
-            .message;
+            .ok_or(Error::ErrorWhileDecodeTransaction(signature))?;
+
+        if tx.signatures.first().ne(&Some(&signature)) {
+            return Err(Error::ErrorWhileDecodeTransaction(signature));
+        }
+
+        let msg = tx.message;
 
         let accounts = self
             .get_loaded_accounts()
