@@ -84,12 +84,13 @@ pub enum EventConsumeResult {
 pub type Event = Vec<String>;
 pub type EventConsumerFn = fn(Event) -> Result<EventConsumeResult>;
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
 pub enum ResyncOrder {
     Newest,
     Historical,
 }
 
+#[derive(derive_builder::Builder)]
 pub struct EventsReader<TransactionConsumerFn, EventRecipient, E>
 where
     EventRecipient: PassEvent + Send + Sync + 'static,
@@ -105,10 +106,12 @@ where
     Error: From<E>,
 {
     pub program_id: Pubkey,
+    #[builder(default = "CommitmentConfig::finalized()")]
     pub commitment_config: CommitmentConfig,
     pub client: Arc<RpcClient>,
     pub pubsub_client: Arc<PubsubClient>,
     pub event_recipient: Arc<EventRecipient>,
+    #[builder(default = "Duration::from_secs(5)")]
     pub resync_duration: Duration,
     pub event_consumer: EventConsumerFn,
     pub transaction_consumer: TransactionConsumerFn,
@@ -116,7 +119,7 @@ where
     pub resync_signatures_chunk_size: Option<usize>,
     pub resync_ptr_setter: Arc<dyn Send + Sync + Fn(u64) -> BoxFuture<'static, Result<()>>>,
     pub resync_order: ResyncOrder,
-
+    #[builder(default = "Arc::new(RwLock::new(None))")]
     pub resync_rollback: Arc<RwLock<Option<SolanaSignature>>>,
 }
 
