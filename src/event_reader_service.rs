@@ -106,10 +106,17 @@ where
     Error: From<E>,
 {
     pub program_id: Pubkey,
+
     #[builder(default = "CommitmentConfig::finalized()")]
     pub commitment_config: CommitmentConfig,
+
     pub client: Arc<RpcClient>,
-    pub pubsub_client: Arc<PubsubClient>,
+
+    #[builder(default = "true")]
+    pub is_resync_enabled: bool,
+
+    pub pubsub_client: Option<Arc<PubsubClient>>,
+
     pub event_recipient: Arc<EventRecipient>,
     #[builder(default = "Duration::from_secs(5)")]
     pub resync_duration: Duration,
@@ -177,8 +184,15 @@ where
     async fn listen_events(&self) -> Result<()> {
         tracing::info!("Launching websocket client");
 
-        let (stream, _unsubscribe) = self
-            .pubsub_client
+        let pubsub_client = match self.pubsub_client.as_ref() {
+            Some(ps) => ps,
+            None => {
+                tracing::info!("Listen events job disabled");
+                return Ok(());
+            }
+        };
+
+        let (stream, _unsubscribe) = pubsub_client
             .logs_subscribe(
                 RpcTransactionLogsFilter::Mentions(vec![self.program_id.to_string()]),
                 RpcTransactionLogsConfig {
@@ -328,6 +342,10 @@ where
     }
 
     async fn resync_events(self: &Arc<Self>) -> Result<()> {
+        if !self.is_resync_enabled {
+            return Ok(());
+        }
+
         'resync: loop {
             tokio::time::sleep(self.resync_duration).await;
             tracing::info!("Start resync for program {}", self.program_id);
