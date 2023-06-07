@@ -39,15 +39,15 @@ rocksdb = { version = "0.21.0", optional = true }
 serde = { version = "1.0.163", features = ["derive"] }
 serde_json = "1.0.96"
 simple_logger = "4.1.0"
-solana-client = { version = "1.14.18", optional = true }
-solana-sdk = { version = "1.14.18", optional = true }
-solana-transaction-status = { version = "1.14.18", optional = true }
+solana-client = { version = "1.14.15", optional = true }
+solana-sdk = { version = "1.14.15", optional = true }
+solana-transaction-status = { version = "1.14.15", optional = true }
 thiserror = { version = "1.0.40", optional = true }
 tokio = "1.28.1"
 tracing = "0.1.37"
 
 [dependencies.de-solana-client]
-version = "0.3.3"
+version = "0.3.4"
 optional = true
 
 [dependencies.anchor-lang]
