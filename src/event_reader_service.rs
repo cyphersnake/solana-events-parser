@@ -147,10 +147,9 @@ where
     Error: From<E>,
 {
     pub async fn run(self: Arc<Self>) -> Result<()> {
-        let mut tasks = tokio::task::JoinSet::default();
         let self_ref = Arc::clone(&self);
         let program_id = self.program_id.to_string();
-        tasks.spawn(async move {
+        let listen_event = tokio::task::spawn(async move {
             self_ref
                 .listen_events()
                 .instrument(tracing::span!(
@@ -162,7 +161,7 @@ where
         });
         let self_ref = Arc::clone(&self);
         let program_id = self.program_id.to_string();
-        tasks.spawn(async move {
+        let resync_events = tokio::task::spawn(async move {
             self_ref
                 .resync_events()
                 .instrument(tracing::span!(
@@ -173,11 +172,10 @@ where
                 .await
         });
 
-        while let Some(result) = tasks.join_next().await {
-            result
-                .inspect_err(|err| tracing::error!("Error while join task: {err:?}"))?
-                .inspect_err(|err| tracing::error!("Error while task: {err:?}"))?;
+        if let Err(err) = tokio::try_join!(listen_event, resync_events) {
+            tracing::error!("Error while run main task: {err:?}")
         }
+
         Ok(())
     }
 
@@ -379,12 +377,12 @@ where
                 )
                 .enumerate();
 
-            let mut tasks = tokio::task::JoinSet::new();
+            let mut tasks = Vec::new();
             for (index, signatures_chunk) in signatures_chunks {
                 let self_clone = self.clone();
                 let signatures_chunk = signatures_chunk.to_vec();
 
-                tasks.spawn(async move {
+                tasks.push(async move {
                     for tx_signature in signatures_chunk.into_iter() {
                         tracing::info!(
                             "Unprocessed (by ws) transaction find while resynchronization process, transaction hash: {}",
@@ -427,7 +425,12 @@ where
             }
 
             let mut tasks_success = true;
-            while let Some(task) = tasks.join_next().await {
+            let mut completion_stream = tasks
+                .into_iter()
+                .map(tokio::spawn)
+                .collect::<futures::stream::FuturesUnordered<_>>();
+
+            while let Some(task) = completion_stream.next().await {
                 tasks_success &= match task {
                     Ok(Ok(())) => true,
                     Ok(Err(err)) => {
