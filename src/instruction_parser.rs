@@ -98,12 +98,18 @@ impl BindInstructions for EncodedTransactionWithStatusMeta {
         &self,
         signature: Signature,
     ) -> Result<HashMap<InstructionContext, (Instruction, OuterInstructionProgramId)>, Error> {
-        let tx = self
-            .transaction
-            .decode()
-            .ok_or(Error::ErrorWhileDecodeTransaction(signature))?;
+        let tx = self.transaction.decode().ok_or_else(|| {
+            tracing::error!("Can't decode transaction");
+            Error::ErrorWhileDecodeTransaction(signature)
+        })?;
 
         if tx.signatures.first().ne(&Some(&signature)) {
+            use itertools::Itertools;
+            tracing::error!(
+                "Signature not match {}, {}",
+                signature,
+                tx.signatures.iter().map(ToString::to_string).join(", ")
+            );
             return Err(Error::ErrorWhileDecodeTransaction(signature));
         }
 
