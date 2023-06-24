@@ -378,7 +378,7 @@ impl BindTransactionInstructionLogs for RpcClient {
             .get_transaction_with_config(
                 &signature,
                 RpcTransactionConfig {
-                    encoding: Some(UiTransactionEncoding::Base58),
+                    encoding: Some(UiTransactionEncoding::Binary),
                     max_supported_transaction_version: Some(0),
                     commitment: Some(commitment_config),
                 },
