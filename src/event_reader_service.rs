@@ -356,9 +356,7 @@ where
                 Ok(non_empty_signatures) => non_empty_signatures,
                 Err(EmptyError) => {
                     (self.resync_ptr_setter)(resync_last_slot).await?;
-                    if let Some(last_transaction) = last_transaction {
-                        self.set_last_resynced_transaction(&last_transaction)?;
-                    }
+                    self.set_last_resynced_transaction(last_transaction)?;
                     tracing::info!("Resync ended: no new transactions");
                     continue 'resync;
                 }
@@ -450,11 +448,11 @@ where
             }
 
             if let Some(last_transaction) = last_transaction {
-                tracing::warn!("resync successful ended, ptr moved to {last_transaction}");
-                self.set_last_resynced_transaction(&last_transaction)?;
+                tracing::info!("resync successful ended, ptr will moved to {last_transaction}");
             } else {
-                tracing::warn!("resync successful ended, not new ptr for move");
+                tracing::info!("resync successful ended, not new ptr for move");
             }
+            self.set_last_resynced_transaction(last_transaction)?;
 
             (self.resync_ptr_setter)(resync_last_slot).await?;
         }
@@ -462,9 +460,9 @@ where
 
     fn set_last_resynced_transaction(
         self: &Arc<Self>,
-        last_transaction: &SolanaSignature,
+        last_transaction: Option<SolanaSignature>,
     ) -> Result<()> {
-        let last_transaction = self
+        if let Some(last_transaction) = self
             .resync_rollback
             .write()
             .ok()
@@ -474,11 +472,12 @@ where
                     tx
                 })
             })
-            .unwrap_or(*last_transaction);
-
-        tracing::info!("Set last resynced tx to {last_transaction} transaction");
-        self.local_storage
-            .set_last_resynced_transaction(&self.program_id, &last_transaction)?;
+            .or(last_transaction)
+        {
+            tracing::info!("Set last resynced tx to {last_transaction} transaction");
+            self.local_storage
+                .set_last_resynced_transaction(&self.program_id, &last_transaction)?;
+        }
 
         Ok(())
     }

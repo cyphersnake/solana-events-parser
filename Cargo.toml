@@ -1,6 +1,6 @@
 [package]
 name = "solana-events-parser"
-version = "0.4.3"
+version = "0.4.4"
 authors = [
     "cyphersnake <cyphersnake@pm.me>",
     "shinkarenko  <shinbogdan@gmail.com>",
