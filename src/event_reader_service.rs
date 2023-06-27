@@ -13,7 +13,7 @@ use solana_client::{
     rpc_config::{RpcTransactionLogsConfig, RpcTransactionLogsFilter},
 };
 use solana_sdk::commitment_config::CommitmentConfig;
-use tracing::Instrument;
+use tracing::{Instrument, *};
 
 pub use crate::transaction_parser::{Pubkey, Signature as SolanaSignature};
 use crate::{
@@ -34,7 +34,7 @@ macro_rules! unwrap_or_continue {
             match $result {
                 Ok(ok) => ok,
                 Err(err) => {
-                    tracing::error!($( $log, )* err = err);
+                    error!($( $log, )* err = err);
                     continue;
                 }
             }
@@ -43,7 +43,7 @@ macro_rules! unwrap_or_continue {
             match $result {
                 Ok(ok) => ok,
                 Err(err) => {
-                    tracing::error!($( $log, )* err = err);
+                    error!($( $log, )* err = err);
                     $action;
                     continue;
                 }
@@ -152,8 +152,8 @@ where
         let listen_event = tokio::task::spawn(async move {
             self_ref
                 .listen_events()
-                .instrument(tracing::span!(
-                    tracing::Level::ERROR,
+                .instrument(span!(
+                    Level::ERROR,
                     "Listen Events",
                     program_id = program_id
                 ))
@@ -164,28 +164,24 @@ where
         let resync_events = tokio::task::spawn(async move {
             self_ref
                 .resync_events()
-                .instrument(tracing::span!(
-                    tracing::Level::ERROR,
-                    "Resync Event",
-                    program_id = program_id,
-                ))
+                .instrument(span!(Level::ERROR, "Resync Event", program_id = program_id,))
                 .await
         });
 
-        if let Err(err) = tokio::try_join!(listen_event, resync_events) {
-            tracing::error!("Error while run main task: {err:?}")
-        }
-
-        Ok(())
+        tokio::try_join!(flatten(listen_event), flatten(resync_events))
+            .map(|((), ())| ())
+            .inspect_err(|err| {
+                error!("Error while run main task: {err:?}");
+            })
     }
 
     async fn listen_events(&self) -> Result<()> {
-        tracing::info!("Launching websocket client");
+        info!("Launching websocket client");
 
         let pubsub_client = match self.pubsub_client.as_ref() {
             Some(ps) => ps,
             None => {
-                tracing::info!("Listen events job disabled");
+                info!("Listen events job disabled");
                 return Ok(());
             }
         };
@@ -197,18 +193,18 @@ where
                     commitment: Some(self.commitment_config),
                 },
             )
-            .instrument(tracing::span!(tracing::Level::ERROR, "LogsSubscribe"))
+            .instrument(span!(Level::ERROR, "LogsSubscribe"))
             .await
-            .inspect_err(|err| tracing::error!("Error while subs: {err:?}"))
+            .inspect_err(|err| error!("Error while subs: {err:?}"))
             .map_err(|err| Error::WebsocketError(err.to_string()))?;
 
         let mut stream = stream.inspect(|subscription_response| {
-            tracing::info!(
+            info!(
                 "Log subscription response received, transaction hash: {}",
                 subscription_response.value.signature
             );
         });
-        tracing::info!("Start listening websocket events");
+        info!("Start listening websocket events");
         loop {
             if let Some(subscription_response) = stream.next().await {
                 let tx_signature = unwrap_or_continue!(
@@ -227,20 +223,20 @@ where
                         .local_storage
                         .is_transaction_registered(&self.program_id, &tx_signature)?
                     {
-                        tracing::info!(
+                        info!(
                             "Transaction {tx_signature} already registered in event-parser, skip"
                         );
                         continue;
                     }
 
-                    tracing::info!("Transaction {tx_signature} not registered yet, processing");
+                    info!("Transaction {tx_signature} not registered yet, processing");
 
                     match (self.event_consumer)(subscription_response.value.logs) {
                         Ok(EventConsumeResult::ConsumeSuccess) => {
-                            tracing::info!("Transaction {tx_signature} consumed successful by ws information only");
+                            info!("Transaction {tx_signature} consumed successful by ws information only");
                         }
                         Ok(EventConsumeResult::TransactionNeeed) => {
-                            tracing::info!("Transaction {tx_signature} direct RPC request needed");
+                            info!("Transaction {tx_signature} direct RPC request needed");
                             let transaction = unwrap_or_continue!(
                                 self.get_transaction_by_signature(tx_signature).await,
                                 "Error while transaction {tx_signature} requesting {err:?}"
@@ -253,27 +249,25 @@ where
                                 Arc::clone(&self.client),
                                 Arc::clone(&self.event_recipient),
                             )
-                            .instrument(tracing::span!(
-                                tracing::Level::ERROR,
+                            .instrument(span!(
+                                Level::ERROR,
                                 "Consume",
                                 tx_signature = transaction_str
                             ))
                             .await
                             {
-                                tracing::error!(
+                                error!(
                                     "Error while transaction {transaction_str} consuming {err:?}",
                                     err = err
                                 );
                             } else {
-                                tracing::info!(
+                                info!(
                                     "Transaction {transaction_str} consumed as part of websocket listener",
                                 );
                             }
                         }
                         Err(err) => {
-                            tracing::error!(
-                                "Error while events consuming {err:?} of {tx_signature}"
-                            );
+                            error!("Error while events consuming {err:?} of {tx_signature}");
                             continue;
                         }
                     };
@@ -298,7 +292,7 @@ where
         let resync_start = self
             .local_storage
             .get_last_resynced_transaction(&self.program_id)?;
-        tracing::info!(
+        info!(
             "Resync start from {}",
             resync_start
                 .as_ref()
@@ -346,7 +340,7 @@ where
 
         'resync: loop {
             tokio::time::sleep(self.resync_duration).await;
-            tracing::info!("Start resync for program {}", self.program_id);
+            info!("Start resync for program {}", self.program_id);
 
             let (resync_last_slot, signatures, mut last_transaction) = unwrap_or_continue!(
                 self.get_unregistered_program_transactions().await,
@@ -357,12 +351,12 @@ where
                 Err(EmptyError) => {
                     (self.resync_ptr_setter)(resync_last_slot).await?;
                     self.set_last_resynced_transaction(last_transaction)?;
-                    tracing::info!("Resync ended: no new transactions");
+                    info!("Resync ended: no new transactions");
                     continue 'resync;
                 }
             };
 
-            tracing::info!(
+            info!(
                 "Find new {} transactions, start processing",
                 signatures.len()
             );
@@ -382,7 +376,7 @@ where
 
                 tasks.push(async move {
                     for tx_signature in signatures_chunk.into_iter() {
-                        tracing::info!(
+                        info!(
                             "Unprocessed (by ws) transaction find while resynchronization process, transaction hash: {}",
                             tx_signature.to_string()
                         );
@@ -402,9 +396,9 @@ where
                         )
                         .await
                         {
-                            tracing::error!("Error while transaction {transaction_str} consuming {err:?}", err = err);
+                            error!("Error while transaction {transaction_str} consuming {err:?}", err = err);
                         } else {
-                            tracing::info!("Transaction {tx_signature} consumed as part of resync process");
+                            info!("Transaction {tx_signature} consumed as part of resync process");
                         }
 
                         self_clone
@@ -414,8 +408,8 @@ where
 
                     Result::Ok(())
                 }
-                    .instrument(tracing::span!(
-                        tracing::Level::ERROR,
+                    .instrument(span!(
+                        Level::ERROR,
                         "Register chunk",
                         chunk_index = index,
                     ))
@@ -432,25 +426,25 @@ where
                 tasks_success &= match task {
                     Ok(Ok(())) => true,
                     Ok(Err(err)) => {
-                        tracing::error!("Error while resync task: {err:?}");
+                        error!("Error while resync task: {err:?}");
                         false
                     }
                     Err(err) => {
-                        tracing::error!("Error while join resync task: {err:?}");
+                        error!("Error while join resync task: {err:?}");
                         false
                     }
                 };
             }
 
             if !tasks_success {
-                tracing::warn!("Some of resync tasks failed, not move resync ptr");
+                warn!("Some of resync tasks failed, not move resync ptr");
                 continue 'resync;
             }
 
             if let Some(last_transaction) = last_transaction {
-                tracing::info!("resync successful ended, ptr will moved to {last_transaction}");
+                info!("resync successful ended, ptr will moved to {last_transaction}");
             } else {
-                tracing::info!("resync successful ended, not new ptr for move");
+                info!("resync successful ended, not new ptr for move");
             }
             self.set_last_resynced_transaction(last_transaction)?;
 
@@ -468,13 +462,13 @@ where
             .ok()
             .and_then(|mut write| {
                 write.take().map(|tx| {
-                    tracing::info!("Found rollback to {tx} transaction");
+                    info!("Found rollback to {tx} transaction");
                     tx
                 })
             })
             .or(last_transaction)
         {
-            tracing::info!("Set last resynced tx to {last_transaction} transaction");
+            info!("Set last resynced tx to {last_transaction} transaction");
             self.local_storage
                 .set_last_resynced_transaction(&self.program_id, &last_transaction)?;
         }
@@ -490,5 +484,18 @@ where
             .bind_transaction_instructions_logs(tx_signature, self.commitment_config)
             .await
             .map_err(Error::EventParserError)
+    }
+}
+
+async fn flatten<T, E>(
+    handle: tokio::task::JoinHandle<result::Result<T, E>>,
+) -> result::Result<T, E>
+where
+    tokio::task::JoinError: Into<E>,
+{
+    match handle.await {
+        Ok(Ok(result)) => Ok(result),
+        Ok(Err(err)) => Err(err),
+        Err(err) => Err(err.into()),
     }
 }
