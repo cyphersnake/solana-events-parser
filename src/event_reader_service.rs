@@ -186,27 +186,27 @@ where
             }
         };
 
-        let (stream, _unsubscribe) = pubsub_client
-            .logs_subscribe(
-                RpcTransactionLogsFilter::Mentions(vec![self.program_id.to_string()]),
-                RpcTransactionLogsConfig {
-                    commitment: Some(self.commitment_config),
-                },
-            )
-            .instrument(span!(Level::ERROR, "LogsSubscribe"))
-            .await
-            .inspect_err(|err| error!("Error while subs: {err:?}"))
-            .map_err(|err| Error::WebsocketError(err.to_string()))?;
-
-        let mut stream = stream.inspect(|subscription_response| {
-            info!(
-                "Log subscription response received, transaction hash: {}",
-                subscription_response.value.signature
-            );
-        });
-        info!("Start listening websocket events");
         loop {
-            if let Some(subscription_response) = stream.next().await {
+            let (stream, _unsubscribe) = pubsub_client
+                .logs_subscribe(
+                    RpcTransactionLogsFilter::Mentions(vec![self.program_id.to_string()]),
+                    RpcTransactionLogsConfig {
+                        commitment: Some(self.commitment_config),
+                    },
+                )
+                .instrument(span!(Level::ERROR, "LogsSubscribe"))
+                .await
+                .inspect_err(|err| error!("Error while subs: {err:?}"))
+                .map_err(|err| Error::WebsocketError(err.to_string()))?;
+
+            let mut stream = stream.inspect(|subscription_response| {
+                info!(
+                    "Log subscription response received, transaction hash: {}",
+                    subscription_response.value.signature
+                );
+            });
+            info!("Start listening websocket events");
+            while let Some(subscription_response) = stream.next().await {
                 let tx_signature = unwrap_or_continue!(
                     subscription_response
                         .value
@@ -233,7 +233,9 @@ where
 
                     match (self.event_consumer)(subscription_response.value.logs) {
                         Ok(EventConsumeResult::ConsumeSuccess) => {
-                            info!("Transaction {tx_signature} consumed successful by ws information only");
+                            info!(
+                            "Transaction {tx_signature} consumed successful by ws information only"
+                        );
                         }
                         Ok(EventConsumeResult::TransactionNeeed) => {
                             info!("Transaction {tx_signature} direct RPC request needed");
@@ -262,8 +264,8 @@ where
                                 );
                             } else {
                                 info!(
-                                    "Transaction {transaction_str} consumed as part of websocket listener",
-                                );
+                                "Transaction {transaction_str} consumed as part of websocket listener",
+                            );
                             }
                         }
                         Err(err) => {
@@ -276,6 +278,8 @@ where
                         .register_transaction(&self.program_id, &tx_signature)?;
                 }
             }
+
+            tracing::warn!("Listen task: stream empty, resubscribe");
         }
     }
 
