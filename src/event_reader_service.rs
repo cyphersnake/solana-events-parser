@@ -90,6 +90,14 @@ pub enum ResyncOrder {
     Historical,
 }
 
+#[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
+pub enum Rollback {
+    #[default]
+    None,
+    Beginning,
+    Signature(SolanaSignature),
+}
+
 #[derive(derive_builder::Builder)]
 pub struct EventsReader<TransactionConsumerFn, EventRecipient, E>
 where
@@ -126,8 +134,8 @@ where
     pub resync_signatures_chunk_size: Option<usize>,
     pub resync_ptr_setter: Arc<dyn Send + Sync + Fn(u64) -> BoxFuture<'static, Result<()>>>,
     pub resync_order: ResyncOrder,
-    #[builder(default = "Arc::new(RwLock::new(None))")]
-    pub resync_rollback: Arc<RwLock<Option<SolanaSignature>>>,
+    #[builder(default = "Arc::new(RwLock::new(Rollback::None))")]
+    pub resync_rollback: Arc<RwLock<Rollback>>,
 }
 
 impl<TransactionConsumerFn, EventRecipient, E>
@@ -460,18 +468,22 @@ where
         self: &Arc<Self>,
         last_transaction: Option<SolanaSignature>,
     ) -> Result<()> {
-        if let Some(last_transaction) = self
-            .resync_rollback
-            .write()
-            .ok()
-            .and_then(|mut write| {
-                write.take().map(|tx| {
-                    info!("Found rollback to {tx} transaction");
-                    tx
-                })
-            })
-            .or(last_transaction)
-        {
+        let next_resync_ptr = match self.resync_rollback.write().as_deref() {
+            Ok(Rollback::Beginning) => {
+                info!("Reset last resynced tx");
+                self.local_storage
+                    .reset_last_resynced_transaction(&self.program_id)?;
+                return Ok(());
+            }
+            Ok(Rollback::None) => last_transaction,
+            Err(err) => {
+                error!("Error while lock rollback: {err:?}");
+                last_transaction
+            }
+            Ok(Rollback::Signature(signature)) => Some(*signature),
+        };
+
+        if let Some(last_transaction) = next_resync_ptr {
             info!("Set last resynced tx to {last_transaction} transaction");
             self.local_storage
                 .set_last_resynced_transaction(&self.program_id, &last_transaction)?;

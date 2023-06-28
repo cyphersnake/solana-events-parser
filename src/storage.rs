@@ -61,6 +61,11 @@ pub trait ResyncedTransactionsPtrStorage: RegisterTransaction {
         program_id: &Pubkey,
         transaction: &SolanaSignature,
     ) -> Result<(), <Self as RegisterTransaction>::Error>;
+
+    fn reset_last_resynced_transaction(
+        &self,
+        program_id: &Pubkey,
+    ) -> Result<(), <Self as RegisterTransaction>::Error>;
 }
 
 #[cfg(feature = "rocksdb")]
@@ -180,6 +185,15 @@ pub mod rocksdb {
                 [&program_id.to_bytes()[..], LAST_RESYNCED_SUFFIX].concat(),
                 bincode::serialize(&transaction)?,
             )?;
+
+            Ok(())
+        }
+
+        fn reset_last_resynced_transaction(
+            &self,
+            program_id: &Pubkey,
+        ) -> Result<(), <Self as RegisterTransaction>::Error> {
+            self.delete([&program_id.to_bytes()[..], LAST_RESYNCED_SUFFIX].concat())?;
 
             Ok(())
         }
