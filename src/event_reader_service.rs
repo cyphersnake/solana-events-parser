@@ -379,6 +379,8 @@ where
                 let signatures_chunk = signatures_chunk.to_vec();
 
                 tasks.push(async move {
+                    let mut is_chunk_successfull_processed = true;
+
                     for tx_signature in signatures_chunk.into_iter() {
                         info!(
                             "Unprocessed (by ws) transaction find while resynchronization process, transaction hash: {}",
@@ -387,7 +389,9 @@ where
 
                         let transaction = unwrap_or_continue!(
                             self_clone.get_transaction_by_signature(tx_signature).await,
-                            error_action = last_transaction.take(),
+                            error_action = {
+                                is_chunk_successfull_processed = false;
+                            },
                             "Error while get transaction by signature: {err:?}"
                         );
 
@@ -401,6 +405,7 @@ where
                         .await
                         {
                             error!("Error while transaction {transaction_str} consuming {err:?}", err = err);
+                            is_chunk_successfull_processed = false;
                         } else {
                             info!("Transaction {tx_signature} consumed as part of resync process");
                         }
@@ -408,9 +413,9 @@ where
                         self_clone
                             .local_storage
                             .register_transaction(&self_clone.program_id, &tx_signature)?;
-                        }
+                    }
 
-                    Result::Ok(())
+                    Result::Ok(is_chunk_successfull_processed)
                 }
                     .instrument(span!(
                         Level::ERROR,
@@ -428,7 +433,11 @@ where
 
             while let Some(task) = completion_stream.next().await {
                 tasks_success &= match task {
-                    Ok(Ok(())) => true,
+                    Ok(Ok(true)) => true,
+                    Ok(Ok(false)) => {
+                        last_transaction.take();
+                        true
+                    }
                     Ok(Err(err)) => {
                         error!("Error while resync task: {err:?}");
                         false
