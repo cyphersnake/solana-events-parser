@@ -286,7 +286,7 @@ where
                 }
             }
 
-            tracing::warn!("Listen task: stream empty, resubscribe");
+            warn!("Listen task: stream empty, resubscribe");
         }
     }
 
@@ -519,7 +519,7 @@ where
                         return Err(err);
                     }
 
-                    log::warn!(
+                    warn!(
                         "Error while request {tx_signature}, attempts left: {attempts_count}"
                     );
                     tokio::time::sleep(attempt_timeout).await;
