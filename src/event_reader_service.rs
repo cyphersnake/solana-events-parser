@@ -519,9 +519,7 @@ where
                         return Err(err);
                     }
 
-                    warn!(
-                        "Error while request {tx_signature}, attempts left: {attempts_count}"
-                    );
+                    warn!("Error while request {tx_signature}, attempts left: {attempts_count}");
                     tokio::time::sleep(attempt_timeout).await;
                 }
             }

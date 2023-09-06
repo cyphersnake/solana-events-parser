@@ -66,7 +66,7 @@ impl GetLoadedAccounts for EncodedTransactionWithStatusMeta {
                 .iter()
                 .copied()
                 .map(Ok)
-                .chain(additional_accounts.into_iter())
+                .chain(additional_accounts)
                 .collect::<Result<Vec<Pubkey>, ParsePubkeyError>>()
                 .map_err(Error::from),
         )
