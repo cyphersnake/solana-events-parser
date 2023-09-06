@@ -128,6 +128,13 @@ where
     pub resync_order: ResyncOrder,
     #[builder(default = "Arc::new(RwLock::new(None))")]
     pub resync_rollback: Arc<RwLock<Option<SolanaSignature>>>,
+    pub live_events_transaction_request_param: TransactionRequestParams,
+}
+
+#[derive(Debug, Clone)]
+pub struct TransactionRequestParams {
+    pub attempts_count: usize,
+    pub attempt_timeout: Duration,
 }
 
 impl<TransactionConsumerFn, EventRecipient, E>
@@ -493,10 +500,32 @@ where
         &self,
         tx_signature: SolanaSignature,
     ) -> Result<TransactionParsedMeta> {
-        self.client
-            .bind_transaction_instructions_logs(tx_signature, self.commitment_config)
-            .await
-            .map_err(Error::EventParserError)
+        let TransactionRequestParams {
+            mut attempts_count,
+            attempt_timeout,
+        } = self.live_events_transaction_request_param.clone();
+
+        loop {
+            match self
+                .client
+                .bind_transaction_instructions_logs(tx_signature, self.commitment_config)
+                .await
+                .map_err(Error::EventParserError)
+            {
+                Ok(tx) => return Ok(tx),
+                Err(err) => {
+                    attempts_count -= 1;
+                    if attempts_count == 0 {
+                        return Err(err);
+                    }
+
+                    tracing::warn!(
+                        "Error while request {tx_signature}, attempts left: {attempts_count}"
+                    );
+                    tokio::time::sleep(attempt_timeout).await;
+                }
+            }
+        }
     }
 }
 
