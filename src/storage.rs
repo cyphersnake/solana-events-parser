@@ -2,6 +2,8 @@
 //! It allows us to keep track of which transactions have already been processed
 //! (registered) and store a pointer to the transaction - resync boundary
 
+use std::fmt;
+
 pub use crate::transaction_parser::{Pubkey, Signature as SolanaSignature};
 
 /// [`RegisterTransaction`] is a trait for managing transactions.
@@ -9,7 +11,7 @@ pub use crate::transaction_parser::{Pubkey, Signature as SolanaSignature};
 /// It provides methods for registering a transaction, checking if a transaction is registered,
 /// and filtering unregistered transactions.
 pub trait RegisterTransaction {
-    type Error;
+    type Error: fmt::Debug;
 
     /// Register a transaction with the given `program_id` and `transaction_hash`.
     fn register_transaction(

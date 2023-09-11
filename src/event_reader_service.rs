@@ -1,5 +1,5 @@
 use std::{
-    result,
+    fmt, result,
     sync::{Arc, RwLock},
     time::Duration,
 };
@@ -150,7 +150,7 @@ where
             Arc<RpcClient>,
             Arc<EventRecipient>,
         ) -> BoxFuture<'static, Result<()>>,
-    E: 'static + Send + Sync,
+    E: 'static + Send + Sync + fmt::Debug,
     Error: From<E>,
 {
     pub async fn run(self: Arc<Self>) -> Result<()> {
@@ -182,7 +182,7 @@ where
             })
     }
 
-    async fn listen_events(&self) -> Result<()> {
+    async fn listen_events(self: Arc<Self>) -> Result<()> {
         info!("Launching websocket client");
 
         let pubsub_client = match self.pubsub_client.as_ref() {
@@ -225,38 +225,45 @@ where
                     "Error while tx signature parsing: {err:?}"
                 );
 
+                if self
+                    .local_storage
+                    .is_transaction_registered(&self.program_id, &tx_signature)?
                 {
-                    if self
-                        .local_storage
-                        .is_transaction_registered(&self.program_id, &tx_signature)?
-                    {
-                        info!(
-                            "Transaction {tx_signature} already registered in event-parser, skip"
-                        );
-                        continue;
-                    }
+                    info!("Transaction {tx_signature} already registered in event-parser, skip");
+                    continue;
+                }
 
+                let self_clone = self.clone();
+                let transaction_str = tx_signature.to_string();
+                tokio::spawn(async move {
                     info!("Transaction {tx_signature} not registered yet, processing");
 
-                    match (self.event_consumer)(subscription_response.value.logs) {
+                    match (self_clone.event_consumer)(subscription_response.value.logs) {
                         Ok(EventConsumeResult::ConsumeSuccess) => {
                             info!(
-                            "Transaction {tx_signature} consumed successful by ws information only"
-                        );
+                                "Transaction {tx_signature} consumed successful by ws information only"
+                            );
                         }
                         Ok(EventConsumeResult::TransactionNeeed) => {
                             info!("Transaction {tx_signature} direct RPC request needed");
-                            let transaction = unwrap_or_continue!(
-                                self.get_transaction_by_signature(tx_signature).await,
-                                "Error while transaction {tx_signature} requesting {err:?}"
-                            );
+
+                            let transaction = match self_clone
+                                .get_transaction_by_signature(tx_signature)
+                                .await
+                            {
+                                Ok(tx) => tx,
+                                Err(err) => {
+                                    error!("Error while get transaction by signature: {err:?}, skip in live process");
+                                    return;
+                                }
+                            };
 
                             let transaction_str = tx_signature.to_string();
-                            if let Err(err) = (self.transaction_consumer)(
+                            if let Err(err) = (self_clone.transaction_consumer)(
                                 tx_signature,
                                 transaction,
-                                Arc::clone(&self.client),
-                                Arc::clone(&self.event_recipient),
+                                Arc::clone(&self_clone.client),
+                                Arc::clone(&self_clone.event_recipient),
                             )
                             .instrument(span!(
                                 Level::ERROR,
@@ -266,24 +273,29 @@ where
                             .await
                             {
                                 error!(
-                                    "Error while transaction {transaction_str} consuming {err:?}",
+                                    "Error while consuming {err:?}",
                                     err = err
                                 );
                             } else {
                                 info!(
-                                "Transaction {transaction_str} consumed as part of websocket listener",
-                            );
+                                    "Transaction consumed as part of websocket listener",
+                                );
                             }
                         }
                         Err(err) => {
-                            error!("Error while events consuming {err:?} of {tx_signature}");
-                            continue;
+                            error!("Error while events consuming {err:?}, skip via live process");
                         }
                     };
 
-                    self.local_storage
-                        .register_transaction(&self.program_id, &tx_signature)?;
-                }
+                    if let Err(err) = self_clone
+                        .local_storage
+                        .register_transaction(&self_clone.program_id, &tx_signature)
+                    {
+                        error!("Error while register tx: {err:?}, skip via live process");
+                    } else {
+                        info!("Registered in local cache");
+                    }
+                 }.instrument(span!(Level::ERROR, "Live Processing", tx_signature = transaction_str)));
             }
 
             warn!("Listen task: stream empty, resubscribe");
