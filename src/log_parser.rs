@@ -602,7 +602,7 @@ mod log_test {
         );
     }
 
-    const INPUT: &str = r##"Program M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K invoke [1]
+    const INPUT: &str = r#"Program M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K invoke [1]
 Program log: Instruction: Deposit
 Program 11111111111111111111111111111111 invoke [2]
 Program 11111111111111111111111111111111 success
@@ -708,7 +708,7 @@ Program BRTbgHnC2AWfumCBU6ExthDie912RiDyiS3uXgMPQPQN failed: Program failed to c
 Program BRTbgHnC2AWfumCBU6ExthDie912RiDyiS3uXgMPQPQN consumed 200000 of 200000 compute units
 Program BRTbgHnC2AWfumCBU6ExthDie912RiDyiS3uXgMPQPQN failed: Program failed to complete
 Program return: BRTbgHnC2AWfumCBU6ExthDie912RiDyiS3uXgMPQ123 some return
-Log truncated"##;
+Log truncated"#;
     #[test]
     fn test_parse() {
         let errors = INPUT
@@ -724,7 +724,7 @@ Log truncated"##;
                 .collect::<Vec<_>>(),
         )
         .unwrap();
-        let program = r##"Program M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K invoke [1]
+        let program = r#"Program M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K invoke [1]
 Program log: Instruction: Deposit
 Program 11111111111111111111111111111111 invoke [2]
 Program 11111111111111111111111111111111 success
@@ -736,7 +736,7 @@ Program 11111111111111111111111111111111 invoke [2]
 Program 11111111111111111111111111111111 success
 Program log: {"price":17800000000,"buyer_expiry":0}
 Program M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K consumed 24562 of 1390703 compute units
-Program M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K success"##;
+Program M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K success"#;
         let program_events = super::parse_events(
             &program
                 .split('\n')
