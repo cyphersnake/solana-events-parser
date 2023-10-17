@@ -1,3 +1,4 @@
+use std::str::FromStr;
 use std::{
     fmt, result,
     sync::{Arc, RwLock},
@@ -20,6 +21,8 @@ use crate::{
     storage,
     transaction_parser::{BindTransactionInstructionLogs, TransactionParsedMeta},
 };
+use de_solana_client::GetTransactionsSignaturesForAddress;
+use solana_transaction_status::EncodedTransaction;
 
 macro_rules! unwrap_or_continue {
         ($result:expr) => {
@@ -67,6 +70,8 @@ pub enum Error {
     StorageError(String),
     #[error(transparent)]
     Client(#[from] de_solana_client::Error),
+    #[error("Wrong configuration: {0}")]
+    WrongConfig(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -312,17 +317,17 @@ where
 
     async fn get_unregistered_program_transactions(
         &self,
+        resync_start: Option<SolanaSignature>,
     ) -> Result<(
         u64,
         result::Result<NonEmptyVec<SolanaSignature>, EmptyError>,
         Option<SolanaSignature>,
     )> {
-        use de_solana_client::GetTransactionsSignaturesForAddress;
-
         let resync_last_slot = self.client.get_slot().await?;
-        let resync_start = self
-            .local_storage
-            .get_last_resynced_transaction(&self.program_id)?;
+        let resync_start = resync_start.map(|s| Ok(Some(s))).unwrap_or_else(|| {
+            self.local_storage
+                .get_last_resynced_transaction(&self.program_id)
+        })?;
         info!(
             "Resync start from {}",
             resync_start
@@ -364,6 +369,130 @@ where
         ))
     }
 
+    pub async fn hard_resync_event(self: Arc<Self>, resync_from_slot: u64) -> Result<()> {
+        let resync_start = match &self
+            .client
+            .get_block(resync_from_slot)
+            .await
+            .map_err(|err| {
+                Error::WrongConfig(format!("Error while getting block by slot: {err:?}"))
+            })?
+            .transactions
+            .first()
+            .ok_or_else(|| Error::WrongConfig("Error while getting tx from block".to_owned()))?
+            .transaction
+        {
+            EncodedTransaction::Json(tx) => Ok(Some(
+                SolanaSignature::from_str(tx.signatures.first().ok_or_else(|| {
+                    Error::WrongConfig("Error while getting tx signature".to_owned())
+                })?)
+                .map_err(|err| {
+                    Error::WrongConfig(format!("Error while signature parsing: {err:?}"))
+                })?,
+            )),
+            other => Err(Error::WrongConfig(format!(
+                "Unexpected format of EncodedTransaction: {other:?}",
+            ))),
+        }?;
+
+        let signatures = <RpcClient as GetTransactionsSignaturesForAddress>::get_signatures_data_for_address_with_config(
+            &self.client,
+            &self.program_id,
+            self.commitment_config,
+            resync_start
+        )
+            .await?            .iter()
+            .map(|sig_data| sig_data.signature).collect::<Vec<_>>();
+
+        let signatures_chunks = signatures
+            .as_slice()
+            .chunks(
+                self.resync_signatures_chunk_size
+                    .unwrap_or(signatures.len()),
+            )
+            .enumerate();
+
+        let mut tasks = Vec::new();
+        for (index, signatures_chunk) in signatures_chunks {
+            let self_clone = self.clone();
+            let signatures_chunk = signatures_chunk.to_vec();
+
+            tasks.push(async move {
+                let mut is_chunk_successfull_processed = true;
+
+                for tx_signature in signatures_chunk.into_iter() {
+                    info!(
+                            "Unprocessed (by ws) transaction find while resynchronization process, transaction hash: {}",
+                            tx_signature.to_string()
+                        );
+
+                    let transaction = unwrap_or_continue!(
+                            self_clone.get_transaction_by_signature(tx_signature).await,
+                            error_action = {
+                                is_chunk_successfull_processed = false;
+                            },
+                            "Error while get transaction by signature: {err:?}"
+                        );
+
+                    let transaction_str = tx_signature.to_string();
+                    if let Err(err) = (self_clone.transaction_consumer)(
+                        tx_signature,
+                        transaction,
+                        Arc::clone(&self_clone.client),
+                        Arc::clone(&self_clone.event_recipient),
+                    )
+                        .await
+                    {
+                        error!("Error while transaction {transaction_str} consuming {err:?}", err = err);
+                        is_chunk_successfull_processed = false;
+                    } else {
+                        info!("Transaction {tx_signature} consumed as part of resync process");
+                    }
+
+                    self_clone
+                        .local_storage
+                        .register_transaction(&self_clone.program_id, &tx_signature)?;
+                }
+
+                Result::Ok(is_chunk_successfull_processed)
+            }
+                .instrument(span!(
+                        Level::ERROR,
+                        "Register chunk",
+                        chunk_index = index,
+                    ))
+            );
+        }
+
+        let mut tasks_success = true;
+        let mut completion_stream = tasks
+            .into_iter()
+            .map(tokio::spawn)
+            .collect::<futures::stream::FuturesUnordered<_>>();
+
+        while let Some(task) = completion_stream.next().await {
+            tasks_success &= match task {
+                Ok(Ok(_)) => true,
+                Ok(Err(err)) => {
+                    error!("Error while resync task: {err:?}");
+                    false
+                }
+                Err(err) => {
+                    error!("Error while join resync task: {err:?}");
+                    false
+                }
+            };
+        }
+
+        if !tasks_success {
+            warn!("Some of resync tasks failed, not move resync ptr");
+        } else {
+            info!("resync successful ended, not new ptr for move");
+        }
+
+        Ok(())
+    }
+
     async fn resync_events(self: &Arc<Self>) -> Result<()> {
         if !self.is_resync_enabled {
             return Ok(());
@@ -374,7 +503,7 @@ where
             info!("Start resync for program {}", self.program_id);
 
             let (resync_last_slot, signatures, mut last_transaction) = unwrap_or_continue!(
-                self.get_unregistered_program_transactions().await,
+                self.get_unregistered_program_transactions(None).await,
                 "Error while get unregistered program signature: {err:?}"
             );
             let signatures = match signatures {
