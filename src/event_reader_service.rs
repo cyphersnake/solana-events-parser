@@ -1,6 +1,6 @@
-use std::str::FromStr;
 use std::{
     fmt, result,
+    str::FromStr,
     sync::{Arc, RwLock},
     time::Duration,
 };
@@ -369,7 +369,7 @@ where
         ))
     }
 
-    pub async fn hard_resync_event(self: Arc<Self>, resync_from_slot: u64) -> Result<()> {
+    pub fn get_start_signature(self: Arc<Self>, resync_from_slot: u64) -> Result<()> {
         let resync_start = match &self
             .client
             .get_block(resync_from_slot)
@@ -386,23 +386,26 @@ where
                 SolanaSignature::from_str(tx.signatures.first().ok_or_else(|| {
                     Error::WrongConfig("Error while getting tx signature".to_owned())
                 })?)
-                .map_err(|err| {
-                    Error::WrongConfig(format!("Error while signature parsing: {err:?}"))
-                })?,
+                    .map_err(|err| {
+                        Error::WrongConfig(format!("Error while signature parsing: {err:?}"))
+                    })?,
             )),
             other => Err(Error::WrongConfig(format!(
                 "Unexpected format of EncodedTransaction: {other:?}",
             ))),
         }?;
+    }
+
+    pub async fn hard_resync_event(self: Arc<Self>, resync_from_slot: u64) -> Result<()> {
+
+        let resync_start = self.get_start_signature(resync_from_slot - 1)?;
 
         let signatures = <RpcClient as GetTransactionsSignaturesForAddress>::get_signatures_data_for_address_with_config(
             &self.client,
             &self.program_id,
             self.commitment_config,
             resync_start
-        )
-            .await?            .iter()
-            .map(|sig_data| sig_data.signature).collect::<Vec<_>>();
+        ).await?.iter().map(|sig_data| sig_data.signature).collect::<Vec<_>>();
 
         let signatures_chunks = signatures
             .as_slice()
@@ -422,7 +425,7 @@ where
 
                 for tx_signature in signatures_chunk.into_iter() {
                     info!(
-                            "Unprocessed (by ws) transaction find while resynchronization process, transaction hash: {}",
+                            "Hard resyncing transaction with signature: {}",
                             tx_signature.to_string()
                         );
 
